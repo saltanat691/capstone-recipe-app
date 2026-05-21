@@ -47,7 +47,7 @@ def setup_tracing() -> None:
     # Set global tracer provider
     trace.set_tracer_provider(provider)
 
-    print(f"✓ OpenTelemetry tracing initialized")
+    print("✓ OpenTelemetry tracing initialized")
     print(f"  Service: {settings.OTEL_SERVICE_NAME}")
     print(f"  Endpoint: {settings.OTEL_EXPORTER_OTLP_ENDPOINT.replace(':4317', ':4318')}/v1/traces")
 
@@ -60,7 +60,7 @@ def instrument_fastapi(app) -> None:
         app: FastAPI application instance
     """
     FastAPIInstrumentor.instrument_app(app)
-    print(f"✓ FastAPI instrumented with OpenTelemetry")
+    print("✓ FastAPI instrumented with OpenTelemetry")
 
 
 def instrument_database() -> None:
@@ -73,7 +73,7 @@ def instrument_database() -> None:
     """
     SQLAlchemyInstrumentor().instrument()
     AsyncPGInstrumentor().instrument()
-    print(f"✓ Database instrumented with OpenTelemetry")
+    print("✓ Database instrumented with OpenTelemetry")
 
 
 def get_current_trace_id() -> str:

@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.ingredient import Ingredient
 from app.models.recipe import Recipe
 from app.observability import get_logger
 

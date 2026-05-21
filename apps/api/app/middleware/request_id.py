@@ -2,7 +2,6 @@
 Request ID middleware for tracking requests across logs and traces.
 """
 
-import logging
 import time
 import uuid
 from typing import Callable
@@ -112,8 +111,6 @@ def get_request_id() -> str:
     Returns:
         str: Request ID or empty string if not available
     """
-    from starlette.requests import Request
-    from contextvars import ContextVar
 
     # This would need to be implemented with contextvars for proper access
     # For now, return empty string as a placeholder

@@ -8,12 +8,15 @@ Linear pipeline:
 """
 
 import uuid
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.agents.grocery_list_agent import (
     GroceryListAgent,
     GroceryListAgentInput,
 )
+
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
 from app.agents.ingredient_agent import IngredientAgent, IngredientAgentInput
 from app.agents.menu_planner_agent import (
     MenuPlannerAgent,
@@ -54,7 +57,7 @@ class RecipeAgentGraph:
         self.nutrition_agent = NutritionAgent()
         self.menu_planner_agent = MenuPlannerAgent()
         self.grocery_list_agent = GroceryListAgent()
-        self.graph = None
+        self.graph: Optional["CompiledStateGraph"] = None
 
     # ---- Nodes ---------------------------------------------------------
 
@@ -161,8 +164,7 @@ class RecipeAgentGraph:
             "menu_planner_agent_node complete",
             extra={
                 "request_id": state.get("request_id"),
-                "days": getattr(output.menu_plan, "days", None)
-                and len(output.menu_plan.days),
+                "days": len(output.menu_plan.days) if output.menu_plan else 0,
             },
         )
         return {"menu_plan": output.menu_plan}
@@ -332,6 +334,7 @@ class RecipeAgentGraph:
         """
         if self.graph is None:
             self.build_graph()
+        assert self.graph is not None  # narrowed for type-checking
 
         initial: State = {
             "request_id": request_id or str(uuid.uuid4()),
@@ -340,7 +343,11 @@ class RecipeAgentGraph:
             "warnings": [],
             "trace_id": trace_id or "",
         }
-        return await self.graph.ainvoke(initial)
+        # ainvoke returns a dict; LangGraph types it as Any, so we cast back
+        # to the TypedDict State alias for downstream consumers.
+        from typing import cast
+
+        return cast(State, await self.graph.ainvoke(initial))
 
 
 # ---- Module-level helpers ---------------------------------------------

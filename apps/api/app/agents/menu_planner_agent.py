@@ -6,7 +6,7 @@ Builds an n-day menu plan from retrieved recipes. Prefers an LLM-backed plan
 round-robin when the LLM is unavailable or returns an unusable plan.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 

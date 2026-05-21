@@ -6,6 +6,7 @@ nutrition agent).
 """
 
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -91,7 +92,7 @@ async def create_recommendations(
             detail="Failed to generate recommendations. Please try again.",
         ) from e
 
-    response: RecommendationResponse = final_state.get("final_response")
+    response: Optional[RecommendationResponse] = final_state.get("final_response")
     if response is None:
         logger.error(
             "Workflow produced no final_response",

@@ -137,9 +137,11 @@ The observability stack provides:
 ### Current Features ✅
 
 - **Recipe Database**: 20 seed recipes with Central Asian and international cuisines
-- **Recipe Search**: Score-based search with ingredient matching, dietary restrictions, and cuisine preferences
-- **Menu Planning**: Automated multi-day meal plan generation
-- **Shopping Lists**: Organized grocery lists by category
+- **AI-powered recommendations**: LangGraph workflow with 5 wired agents — `ingredient → retrieval → nutrition → menu_planner → grocery_list → final_response` — each with structured-output Pydantic schemas and deterministic fallbacks
+- **RAG retrieval**: OpenAI embeddings + pgvector cosine similarity with HNSW index; deterministic re-ranking on cuisine/ingredient overlap; safety filters for excluded ingredients and dietary restrictions
+- **Menu planning**: n-day plans with LLM-driven scheduling, requested meal types, and deterministic validation (restriction conflicts, consecutive-day repeats, day-count mismatches)
+- **Grocery lists**: ingredient aggregation across the plan, deterministic categorization, plural/descriptor-aware matching for `already_available`, optional LLM quantity estimation with practical units
+- **Nutrition estimates**: per-recipe macros + confidence + deterministic safety warnings for the user's stated restrictions
 - **API Documentation**: Interactive Swagger UI and ReDoc
 - **Observability Stack**:
   - Distributed tracing with OpenTelemetry and Tempo
@@ -147,21 +149,17 @@ The observability stack provides:
   - Grafana dashboards for visualization
   - Request ID tracking and trace correlation
 - **Database**: PostgreSQL with pgvector extension and Alembic migrations
-- **Next.js Frontend**: Recipe recommendation form with Tailwind CSS
+- **Next.js Frontend (scaffold only)**: App Router + Tailwind CSS skeleton at `apps/web/`. The recommendation form and API integration are not yet implemented — current `app/page.tsx` is the default Next.js landing page.
 
 ### In Progress 🚧
 
-- Frontend-to-API integration
-- RAG (Retrieval-Augmented Generation) with vector embeddings
-- Semantic search using pgvector
+- Frontend-to-API integration (`apps/web` is currently a Next.js scaffold)
+- Production hardening: containerization, rate limiting, CI/CD
 
 ### Planned 📋
 
-- AI-powered recipe recommendations with LangGraph agents:
-  - Menu planning agent
-  - Shopping list agent
-  - Safety validation agent
-- USDA FoodData Central integration (wired into Nutrition Agent for grounded estimates)
+- USDA FoodData Central integration wired into the Nutrition Agent for grounded estimates (client library is shipped; agent integration pending)
+- Safety validation agent (deterministic checks are inlined into Nutrition and Menu agents today)
 - User authentication and preferences
 - Recipe CRUD operations
 - Recipe ratings and reviews
