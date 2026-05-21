@@ -51,8 +51,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment file
-cp .env.example .env
+# The API reads from <repo-root>/.env — set that up from the repo root if
+# you haven't already (`cp .env.example .env` at the repo root). No
+# additional file is needed inside apps/api.
 
 # Run the API
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload

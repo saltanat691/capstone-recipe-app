@@ -49,10 +49,13 @@ class RecommendationRequest(BaseModel):
     )
 
     days: Optional[int] = Field(
-        default=7,
+        default=None,
         ge=1,
         le=30,
-        description="Number of days to plan meals for",
+        description=(
+            "Number of days to plan meals for. Omit to skip menu planning; "
+            "the Menu Planner Agent will set menu_plan to null."
+        ),
         examples=[7],
     )
 
@@ -128,6 +131,10 @@ class GroceryItem(BaseModel):
     unit: Optional[str] = Field(None, description="Unit of measurement")
     category: Optional[str] = Field(None, description="Store category")
     estimated_cost: Optional[float] = Field(None, description="Estimated cost in dollars")
+    already_available: bool = Field(
+        False,
+        description="True if the user already has this ingredient on hand.",
+    )
 
 
 class GroceryList(BaseModel):
@@ -183,9 +190,14 @@ class RecommendationResponse(BaseModel):
         description="Trace ID for observability and debugging",
     )
 
+    # Internal-only: populated by the graph for logging, tracing, and
+    # debugging (request_id, similarity scores, match reasons, structured
+    # nutrition / menu_plan diagnostics). `exclude=True` keeps the attribute
+    # accessible in Python but drops it from API serialization.
     metadata: Optional[dict[str, Any]] = Field(
         default_factory=dict,
-        description="Additional metadata (processing time, agent info, etc.)",
+        description="Internal diagnostics; not serialized in API responses.",
+        exclude=True,
     )
 
     model_config = {

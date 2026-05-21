@@ -62,10 +62,11 @@ pip install -r requirements.txt
 
 ## 3. Configure Environment Variables
 
-```bash
-# Still in apps/api directory
+The API reads from `<repo-root>/.env`. Create it from the monorepo template
+once, from the repo root:
 
-# Copy example env file
+```bash
+# From the repo root
 cp .env.example .env
 
 # Verify DATABASE_URL is set correctly

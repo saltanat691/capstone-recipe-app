@@ -61,8 +61,8 @@ Different tools require different driver formats:
 - **Base format** (config default): `postgresql://...`
 
 **Status**: ✅ All correctly configured:
-- `apps/api/.env.example`: Specifies both `DATABASE_URL` and `ALEMBIC_DATABASE_URL`
-- `app/core/config.py`: Removed fallback default (now requires env var)
+- Root `.env.example` specifies both `DATABASE_URL` and `ALEMBIC_DATABASE_URL`
+- `app/core/config.py`: Reads from `<repo-root>/.env` (with optional override at `apps/api/.env`)
 - `app/db/session.py`: Converts to asyncpg format
 - `alembic/env.py`: Uses `ALEMBIC_DATABASE_URL` with psycopg
 
@@ -118,8 +118,10 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 OTEL_SERVICE_NAME=recipe-api
 ```
 
-### Project Root .env (Optional)
-The root `.env.example` is for documentation only. The actual configuration is in `apps/api/.env`.
+### Project Root .env (Primary)
+The root `.env.example` is the single monorepo-wide template. Copy it to
+`<repo-root>/.env` — the API reads from that path via pydantic-settings.
+A legacy `apps/api/.env` is still honored as an optional local override.
 
 ## 📁 Directory Structure Verification
 
@@ -129,7 +131,6 @@ The root `.env.example` is for documentation only. The actual configuration is i
 ✅ /infra/grafana/provisioning/dashboards/
 ✅ /infra/tempo/tempo.yml
 ✅ /infra/loki/loki.yml
-✅ /apps/api/.env.example
 ✅ /apps/api/requirements.txt
 ✅ /apps/api/alembic/versions/001_initial_migration.py
 ✅ /apps/api/app/main.py

@@ -1,57 +1,68 @@
 """
-Shared state model for the recipe AI agent workflow.
+Shared state for the recipe AI agent workflow.
 
-This module defines the state that is passed between agents in the LangGraph workflow.
-Each agent reads from and writes to this shared state.
+Passed between nodes in the LangGraph workflow. All fields are optional
+(`total=False`) so nodes can write only what they produce and LangGraph
+merges partial updates into the running state.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from typing_extensions import TypedDict
 
 
 class RecipeAgentState(TypedDict, total=False):
     """
-    Shared state for the recipe AI agent workflow.
+    Workflow state. Field types kept loose (Any) to avoid import coupling
+    between this module and the agents/services that produce the values.
 
-    This state is passed between all agents in the LangGraph workflow.
-    Agents can read from any field and write to relevant fields.
+    Core fields:
+        request_id: Stable per-request identifier (string UUID).
+        raw_user_input: The user's free-text message.
+        explicit_inputs: Optional dict of API-supplied structured fields
+            (available_ingredients, dietary_restrictions, cuisine_preferences,
+            servings, days).
+        ingredient_agent_output: IngredientAgentOutput from the ingredient
+            agent node.
+        retrieved_recipes: list[RetrievedRecipe] from the RAG retrieval node.
+        nutrition_notes: list[NutritionNote] from the Nutrition Agent.
+        menu_plan: MenuPlan | None from the Menu Planner Agent.
+        grocery_list: GroceryList | None from the Grocery List Agent.
+        final_response: RecommendationResponse produced by the final node.
+        warnings: Accumulated non-fatal warnings.
+        trace_id: External trace identifier for observability.
 
-    Attributes:
-        raw_user_input: Original user input with all requirements
-        available_ingredients: List of ingredients the user has available
-        dietary_restrictions: List of dietary restrictions (vegetarian, vegan, etc.)
-        cuisine_preferences: List of preferred cuisines (Italian, Mexican, etc.)
-        servings: Number of servings needed
-        days: Number of days to plan meals for
-        candidate_recipes: List of potential recipes found by recipe agent
-        selected_recipes: Final list of recipes selected for the menu
-        nutrition_notes: Nutritional analysis and recommendations
-        menu_plan: Complete menu plan with recipes organized by day
-        grocery_list: Shopping list with ingredients and quantities
-        validation_warnings: Safety warnings or validation issues
-        metadata: Additional metadata (agent run ID, timestamps, etc.)
+    Legacy fields (kept for compatibility with the placeholder agents that
+    are not wired into the current graph; safe to remove once those agents
+    are reimplemented):
+        available_ingredients, dietary_restrictions, cuisine_preferences,
+        servings, days, candidate_recipes, selected_recipes,
+        validation_warnings, metadata.
     """
 
-    # User input fields
+    # Core workflow fields
+    request_id: str
     raw_user_input: str
+    explicit_inputs: dict[str, Any]
+    ingredient_agent_output: Any  # IngredientAgentOutput
+    retrieved_recipes: list[Any]  # list[RetrievedRecipe]
+    nutrition_notes: list[Any]  # list[NutritionNote] from NutritionAgent
+    menu_plan: Any  # app.schemas.menu_plan.MenuPlan | None from MenuPlannerAgent
+    grocery_list: Any  # app.schemas.grocery_list.GroceryList | None
+    final_response: Any  # RecommendationResponse
+    warnings: list[str]
+    trace_id: str
+
+    # Legacy fields (still referenced by stub agents elsewhere)
     available_ingredients: list[str]
     dietary_restrictions: list[str]
     cuisine_preferences: list[str]
     servings: int
     days: int
-
-    # Agent processing fields
     candidate_recipes: list[dict[str, Any]]
     selected_recipes: list[dict[str, Any]]
-    nutrition_notes: str
-    menu_plan: dict[str, Any]
-    grocery_list: dict[str, Any]
     validation_warnings: list[str]
-
-    # Metadata
     metadata: dict[str, Any]
 
 
-# Type alias for convenience
 State = RecipeAgentState

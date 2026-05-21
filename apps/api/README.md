@@ -81,9 +81,13 @@ apps/api/
    ```
 
 5. **Set up environment variables:**
+
+   The API reads from `<repo-root>/.env`. Create it once from the monorepo
+   template at the repo root, then edit with your real values:
    ```bash
+   # From the repo root
    cp .env.example .env
-   # Edit .env with your configuration if needed
+   # Edit .env with your real OPENAI_API_KEY, USDA_API_KEY, etc.
    ```
 
 6. **Set up the database:**
@@ -356,6 +360,50 @@ The application uses Pydantic settings for configuration management. Settings ca
 | `ENVIRONMENT` | Environment (development/staging/production) | development |
 | `DEBUG` | Debug mode | true |
 | `DATABASE_URL` | PostgreSQL connection string | postgresql://user:password@localhost:5432/recipe_ai |
+| `USDA_API_KEY` | USDA FoodData Central API key (optional) | _empty_ |
+| `USDA_API_BASE_URL` | USDA FDC base URL | https://api.nal.usda.gov/fdc/v1 |
+
+## USDA FoodData Central Integration (Optional)
+
+The Nutrition Agent currently produces per-recipe nutrition estimates via the LLM alone. Estimates are labeled as approximate and tagged with a `confidence` field.
+
+For improved accuracy, the project ships an optional integration with the USDA FoodData Central (FDC) API. When enabled, agents can ground LLM estimates with authoritative per-100g nutrient data for individual ingredients.
+
+**This integration is opt-in.** The app runs without it; the Nutrition Agent simply uses LLM-only estimates.
+
+### Enabling
+
+1. Get a free API key at https://fdc.nal.usda.gov/api-key-signup.html (no credit card required).
+2. Add it to `apps/api/.env`:
+   ```
+   USDA_API_KEY=your_key_here
+   ```
+3. Restart the API.
+
+### Available client
+
+Located at `app/services/nutrition_data_service.py`:
+
+```python
+from app.services import NutritionDataService, search_food, get_food_details
+
+# One-shot helpers
+results = await search_food("chicken breast")
+detail = await get_food_details(results[0]["fdcId"])
+
+# Or reuse an httpx connection across calls
+async with NutritionDataService() as svc:
+    a = await svc.search_food("rice")
+    b = await svc.get_food_details(a[0]["fdcId"])
+```
+
+Errors are raised explicitly:
+- `USDAConfigError` — `USDA_API_KEY` is missing or the API rejects it (`401`/`403`)
+- `USDAApiError` — transport, HTTP, or payload errors
+
+### Status
+
+The client is implemented but **not yet wired into the agent graph**. A follow-up will use it inside the Nutrition Agent to anchor estimates with USDA per-100g data and bump `confidence` to `"medium"`/`"high"` when ingredient quantities are available.
 
 ## Project Guidelines
 

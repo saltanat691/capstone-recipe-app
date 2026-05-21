@@ -1,202 +1,440 @@
 """
-Grocery list generation agent.
+Grocery List Agent.
 
-This agent creates shopping lists from menu plans.
+Builds a grocery list from a menu plan plus the retrieved recipes referenced
+by that plan. Aggregation, categorization, and the `already_available` flag
+are always deterministic. When an OpenAI key is configured, the agent
+additionally asks an LLM to estimate quantities and units for each
+ingredient; on any LLM failure it gracefully falls back to a list without
+quantities.
 """
 
-from typing import Any
+import re
+from typing import Literal, Optional
 
-from app.agents.state import State
+from pydantic import BaseModel, Field
+
+from app.core.config import settings
 from app.observability import get_logger
+from app.schemas.grocery_list import GroceryItem, GroceryList
+from app.schemas.menu_plan import MenuPlan
+from app.services.rag_recipe_service import RetrievedRecipe
 
 logger = get_logger(__name__)
 
 
+class GroceryListAgentInput(BaseModel):
+    """Menu plan + recipe catalog + the ingredients the user already has."""
+
+    menu_plan: Optional[MenuPlan] = None
+    recipes: list[RetrievedRecipe] = Field(default_factory=list)
+    available_ingredients: list[str] = Field(default_factory=list)
+    servings: int = 2
+    days: Optional[int] = None
+
+
+class GroceryListAgentOutput(BaseModel):
+    """`grocery_list` is None when no menu plan was provided."""
+
+    grocery_list: Optional[GroceryList] = None
+
+
+# Practical units the LLM may use. Anything else is dropped to None.
+_ALLOWED_UNITS = frozenset({"kg", "g", "pcs", "bunch", "tbsp", "tsp", "liters"})
+
+
+class _LLMQuantityEstimate(BaseModel):
+    """Per-ingredient quantity estimate from the LLM."""
+
+    name: str
+    quantity: Optional[float] = Field(default=None, ge=0)
+    unit: Optional[
+        Literal["kg", "g", "pcs", "bunch", "tbsp", "tsp", "liters"]
+    ] = None
+
+
+class _LLMQuantities(BaseModel):
+    """Structured-output schema for the quantity-estimation call."""
+
+    estimates: list[_LLMQuantityEstimate] = Field(default_factory=list)
+
+
+_ESTIMATE_WARNING = (
+    "Quantities are estimates because recipe ingredient amounts are incomplete."
+)
+
+
+_LLM_SYSTEM_PROMPT = """You estimate grocery quantities for a meal plan.
+
+Hard rules:
+- Every numeric value is an ESTIMATE. Never claim precision.
+- Do NOT provide medical advice or recommend specific health actions.
+- Quantities scale with the number of servings and the number of days/meals
+  the ingredient appears in.
+- Use only these units: kg, g, pcs, bunch, tbsp, tsp, liters. Choose the
+  most practical unit per ingredient. If you cannot estimate, return null
+  for `quantity` and `unit`.
+- Combine totals across multiple recipes — return one entry per
+  ingredient name from the input list.
+- Return entries that use EXACTLY the input ingredient names (case
+  preserved) so downstream code can match them.
+- Output structured JSON only; no extra prose.
+"""
+
+
 class GroceryListAgent:
-    """
-    Agent responsible for generating shopping lists.
+    """Deterministic grocery-list builder with optional LLM quantity layer."""
 
-    This agent:
-    - Aggregates ingredients from menu plan
-    - Consolidates quantities
-    - Organizes by category (produce, dairy, etc.)
-    - Removes items user already has
-    - Estimates costs
-    - Suggests bulk buying opportunities
-    """
-
-    def __init__(self) -> None:
-        """Initialize the grocery list agent."""
+    def __init__(self, model: Optional[str] = None) -> None:
         self.name = "grocery_list_agent"
-        logger.info(f"Initialized {self.name}")
+        self._model_name = model or settings.LLM_MODEL
+        self._structured_llm = None  # lazy
+        logger.info(f"Initialized {self.name} with model={self._model_name}")
 
-    async def generate_grocery_list(self, state: State) -> State:
-        """
-        Generate a complete grocery list from menu plan.
+    # ---- LLM client ----------------------------------------------------
 
-        This function will:
-        1. Extract all ingredients from menu plan
-        2. Aggregate quantities of same ingredients
-        3. Subtract ingredients user already has
-        4. Normalize units (convert to standard measurements)
-        5. Organize by store category
-        6. Add estimated costs
-        7. Update state with grocery_list
+    def _get_structured_llm(self):
+        if self._structured_llm is not None:
+            return self._structured_llm
+        if not settings.OPENAI_API_KEY:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set; GroceryListAgent cannot call the LLM."
+            )
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as e:
+            raise RuntimeError(
+                "langchain-openai is not installed; "
+                "run `pip install -r requirements.txt`."
+            ) from e
+        llm = ChatOpenAI(
+            model=self._model_name,
+            api_key=settings.OPENAI_API_KEY,
+            temperature=0,
+        )
+        self._structured_llm = llm.with_structured_output(_LLMQuantities)
+        return self._structured_llm
 
-        Args:
-            state: Current agent state with menu_plan and available_ingredients
+    # ---- Public entrypoint --------------------------------------------
 
-        Returns:
-            Updated state with grocery_list dictionary
+    async def create_grocery_list(
+        self, agent_input: GroceryListAgentInput
+    ) -> GroceryListAgentOutput:
+        if agent_input.menu_plan is None:
+            logger.info("GroceryListAgent skipped: no menu_plan in input")
+            return GroceryListAgentOutput(grocery_list=None)
 
-        TODO: Implement ingredient aggregation
-        TODO: Add unit conversion logic
-        TODO: Implement cost estimation
-        """
+        items, warnings = self._build_deterministic_items(agent_input)
+
+        # If we have no items, skip the LLM entirely.
+        if items:
+            try:
+                items, llm_warning = await self._fill_quantities(items, agent_input)
+                if llm_warning:
+                    warnings.append(llm_warning)
+            except Exception as e:
+                logger.warning(
+                    f"GroceryListAgent quantity LLM failed ({e}); "
+                    "returning list without quantities"
+                )
+
+        items.sort(key=lambda i: (i.already_available, i.name.lower()))
+
+        to_buy = sum(1 for i in items if not i.already_available)
+        on_hand = sum(1 for i in items if i.already_available)
+        if not items:
+            warnings.append("No ingredients found from the menu plan.")
+            summary = "Empty grocery list."
+        else:
+            summary = (
+                f"{len(items)} unique ingredient(s); "
+                f"{to_buy} to buy, {on_hand} already on hand."
+            )
+
         logger.info(
-            "Generating grocery list",
+            "GroceryListAgent.create_grocery_list complete",
             extra={
-                "menu_days": state.get("days", 0),
-                "available_items": len(state.get("available_ingredients", [])),
+                "items": len(items),
+                "to_buy": to_buy,
+                "already_available": on_hand,
+                "warnings": len(warnings),
             },
         )
+        return GroceryListAgentOutput(
+            grocery_list=GroceryList(items=items, summary=summary, warnings=warnings)
+        )
 
-        # Placeholder - will be implemented
-        return state
+    # ---- Deterministic builder -----------------------------------------
 
-    async def aggregate_ingredients(
-        self, recipes: list[dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
+    @staticmethod
+    def _build_deterministic_items(
+        agent_input: GroceryListAgentInput,
+    ) -> tuple[list[GroceryItem], list[str]]:
+        recipes_by_id = {str(r.id): r for r in agent_input.recipes}
+        available_norm: set[str] = {
+            _normalize_ingredient(a)
+            for a in agent_input.available_ingredients
+            if a and a.strip()
+        }
+        available_norm.discard("")
+
+        aggregated: dict[str, dict] = {}
+        warnings: list[str] = []
+        unresolved_recipe_ids: set[str] = set()
+
+        for day in agent_input.menu_plan.days:  # type: ignore[union-attr]
+            for meal in day.meals:
+                if not meal.recipe_id:
+                    continue
+                recipe = recipes_by_id.get(meal.recipe_id)
+                if recipe is None:
+                    unresolved_recipe_ids.add(meal.recipe_id)
+                    continue
+                for raw_name in recipe.ingredients:
+                    name = (raw_name or "").strip()
+                    if not name:
+                        continue
+                    key = name.lower()
+                    entry = aggregated.setdefault(
+                        key,
+                        {
+                            "name": name,
+                            "recipes_used_in": [],
+                            "seen_recipes": set(),
+                        },
+                    )
+                    if meal.recipe_id not in entry["seen_recipes"]:
+                        entry["seen_recipes"].add(meal.recipe_id)
+                        entry["recipes_used_in"].append(meal.recipe_id)
+
+        if unresolved_recipe_ids:
+            warnings.append(
+                "Some menu items reference recipes not in the retrieved set: "
+                + ", ".join(sorted(unresolved_recipe_ids))
+            )
+
+        items: list[GroceryItem] = []
+        for entry in aggregated.values():
+            already = _matches_available(entry["name"], available_norm)
+            items.append(
+                GroceryItem(
+                    name=entry["name"],
+                    category=categorize_ingredient(entry["name"]),
+                    quantity=None,
+                    unit=None,
+                    recipes_used_in=entry["recipes_used_in"],
+                    already_available=already,
+                    notes=[],
+                )
+            )
+        return items, warnings
+
+    # ---- LLM quantity layer --------------------------------------------
+
+    async def _fill_quantities(
+        self,
+        items: list[GroceryItem],
+        agent_input: GroceryListAgentInput,
+    ) -> tuple[list[GroceryItem], Optional[str]]:
         """
-        Aggregate ingredients from multiple recipes.
-
-        Combines:
-        - Same ingredients with different units
-        - Similar ingredients (e.g., "tomato" and "tomatoes")
-        - Converts to standard measurements
-
-        Args:
-            recipes: List of recipes in menu plan
-
-        Returns:
-            Dictionary of aggregated ingredients with quantities
-
-        TODO: Implement aggregation logic
-        TODO: Add unit conversion
-        TODO: Handle similar ingredient names
+        Ask the LLM for per-ingredient quantity estimates and stamp them onto
+        the items in place. Returns (items, warning) where `warning` is the
+        estimate disclaimer string when any quantity was set, else None.
         """
-        logger.info(f"Aggregating ingredients from {len(recipes)} recipes")
+        structured_llm = self._get_structured_llm()
+        prompt = self._build_prompt(items, agent_input)
+        estimates: _LLMQuantities = await structured_llm.ainvoke(prompt)
 
-        # Placeholder - will be implemented
-        return {}
+        by_name = {item.name.strip().lower(): item for item in items}
+        applied = 0
+        for est in estimates.estimates:
+            target = by_name.get(est.name.strip().lower())
+            if target is None:
+                continue
+            if est.quantity is not None and est.quantity > 0:
+                target.quantity = est.quantity
+            if est.unit and est.unit in _ALLOWED_UNITS:
+                target.unit = est.unit
+            if target.quantity is not None or target.unit is not None:
+                applied += 1
 
-    async def categorize_items(
-        self, ingredients: dict[str, dict[str, Any]]
-    ) -> dict[str, list[dict[str, Any]]]:
-        """
-        Organize ingredients by store category.
+        warning = _ESTIMATE_WARNING if applied > 0 else None
+        return items, warning
 
-        Categories:
-        - Produce (fruits, vegetables)
-        - Meat & Seafood
-        - Dairy & Eggs
-        - Bakery
-        - Pantry (canned goods, spices, etc.)
-        - Frozen
-        - Beverages
+    @staticmethod
+    def _build_prompt(
+        items: list[GroceryItem], agent_input: GroceryListAgentInput
+    ) -> str:
+        # Provide minimal context the LLM needs to scale quantities.
+        recipe_lines: list[str] = []
+        for r in agent_input.recipes:
+            recipe_lines.append(
+                f"- id={r.id} | name={r.name} | "
+                f"ingredients: {', '.join(r.ingredients) or '(unknown)'}"
+            )
+        recipes_block = "\n".join(recipe_lines) or "(none)"
 
-        Args:
-            ingredients: Dictionary of ingredients
+        ingredient_lines = "\n".join(
+            f"- {item.name} (used in recipe(s): {', '.join(item.recipes_used_in) or 'n/a'})"
+            for item in items
+        )
 
-        Returns:
-            Dictionary mapping category to list of items
+        days = agent_input.days if agent_input.days is not None else 1
+        return (
+            f"{_LLM_SYSTEM_PROMPT}\n"
+            f"---\n"
+            f"Servings per meal: {agent_input.servings}\n"
+            f"Days in plan: {days}\n"
+            f"Recipes referenced:\n{recipes_block}\n"
+            f"Ingredients to estimate (one entry per name, exact spelling):\n"
+            f"{ingredient_lines}\n"
+            f"---\n"
+            f"Return one `estimates` entry per ingredient above."
+        )
 
-        TODO: Implement categorization logic
-        TODO: Add LLM-based category suggestions
-        """
-        logger.info(f"Categorizing {len(ingredients)} items")
 
-        # Placeholder - will be implemented
-        return {}
+# Category lookup table. Order matters:
+#   - Compound keys (e.g. "black pepper", "soy sauce", "bay leaves") must sit
+#     in their intended category *before* an ambiguous single-word key reaches
+#     the same string. Concretely, "spices" is checked before "vegetables" so
+#     that "black pepper" is classified as a spice; a recipe ingredient like
+#     "bell pepper" still falls through to "vegetables".
+#   - "pantry" sits after "vegetables" so that compound items like
+#     "tomato sauce" prefer "vegetables" only when there's no clearer pantry
+#     keyword; the dedicated "soy sauce" / "broth" keys still win.
+_CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "meat",
+        (
+            "chicken", "beef", "fish", "lamb", "pork", "turkey", "duck",
+            "bacon", "ham", "sausage", "veal", "mutton", "salmon", "tuna",
+            "shrimp", "meat",
+        ),
+    ),
+    (
+        "spices",
+        (
+            "black pepper", "bay leaves", "bay leaf", "salt", "cumin",
+            "coriander", "paprika", "chili", "turmeric", "cinnamon",
+            "ginger", "cardamom", "saffron", "oregano", "basil", "thyme",
+            "rosemary", "clove", "nutmeg", "spice", "herb",
+        ),
+    ),
+    (
+        "vegetables",
+        (
+            "onion", "carrot", "celery", "tomato", "potato", "garlic",
+            "pepper", "broccoli", "cucumber", "lettuce", "spinach",
+            "mushroom", "zucchini", "eggplant", "cabbage", "leek", "kale",
+            "vegetable",
+        ),
+    ),
+    (
+        "grains",
+        (
+            "rice", "noodles", "noodle", "pasta", "flour", "buckwheat",
+            "oat", "barley", "couscous", "quinoa", "bread", "tortilla",
+            "bun", "wheat",
+        ),
+    ),
+    (
+        "dairy",
+        ("milk", "cheese", "yogurt", "butter", "cream", "dairy"),
+    ),
+    (
+        "fruits",
+        (
+            "apple", "banana", "lemon", "lime", "orange", "berry",
+            "strawberry", "raspberry", "blueberry", "grape", "pear",
+            "peach", "mango", "pineapple", "fruit",
+        ),
+    ),
+    (
+        "pantry",
+        (
+            "soy sauce", "broth", "stock", "oil", "vinegar", "sauce",
+            "soy", "sugar", "honey", "bean", "lentil", "chickpea",
+        ),
+    ),
+]
 
-    async def subtract_available_ingredients(
-        self, ingredients: dict[str, Any], available: list[str]
-    ) -> dict[str, Any]:
-        """
-        Remove ingredients the user already has.
 
-        Args:
-            ingredients: Complete ingredient list
-            available: Ingredients user has available
+def categorize_ingredient(name: str) -> str:
+    """Return a grocery category for an ingredient name.
 
-        Returns:
-            Filtered ingredient list
+    Deterministic, case-insensitive keyword match against the table above.
+    Returns ``"other"`` when no keyword matches.
+    """
+    needle = (name or "").strip().lower()
+    if not needle:
+        return "other"
+    for category, keywords in _CATEGORY_KEYWORDS:
+        for keyword in keywords:
+            if keyword in needle:
+                return category
+    return "other"
 
-        TODO: Implement ingredient matching
-        TODO: Handle partial quantities (e.g., "need 3 eggs, have 1")
-        """
-        logger.info(f"Removing {len(available)} available ingredients")
 
-        # Placeholder - will be implemented
-        return ingredients
+# Descriptors stripped during normalization so "long-grain rice" → "rice",
+# "fresh boneless chicken thighs" → "chicken thigh", etc.
+_DESCRIPTORS: frozenset[str] = frozenset(
+    {
+        "fresh", "whole", "raw", "cooked", "uncooked", "ripe", "dried",
+        "canned", "frozen", "organic", "extra", "virgin", "unsalted",
+        "salted", "lean", "boneless", "skinless", "ground", "diced",
+        "chopped", "sliced", "minced", "shredded", "grated", "crushed",
+        "peeled", "long", "short", "grain", "low", "fat", "free",
+    }
+)
 
-    async def estimate_costs(
-        self, ingredients: dict[str, Any]
-    ) -> tuple[dict[str, Any], float]:
-        """
-        Estimate costs for grocery items.
 
-        Args:
-            ingredients: Ingredient list with quantities
+def _singularize(word: str) -> str:
+    """Trim simple English plurals. Conservative — keeps short words intact."""
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if (
+        word.endswith(("ses", "xes", "zes", "ches", "shes"))
+        and not word.endswith("sses")
+    ):
+        return word[:-2]
+    if word.endswith("oes") and len(word) >= 5:
+        # tomatoes -> tomato, potatoes -> potato, heroes -> hero
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
 
-        Returns:
-            Tuple of (ingredients_with_costs, total_cost)
 
-        TODO: Implement cost estimation
-        TODO: Integrate with price database or API
-        TODO: Add regional price variations
-        """
-        logger.info("Estimating grocery costs")
+def _normalize_ingredient(name: str) -> str:
+    """
+    Lowercase, strip punctuation, drop common descriptors, singularize each
+    word. Returns a space-joined canonical form like 'chicken thigh' for
+    'Fresh Boneless Chicken Thighs'.
+    """
+    s = (name or "").strip().lower()
+    if not s:
+        return ""
+    # treat hyphens, slashes, and commas as word separators
+    s = re.sub(r"[-/,]+", " ", s)
+    tokens = [t for t in re.split(r"\s+", s) if t and t not in _DESCRIPTORS]
+    tokens = [_singularize(t) for t in tokens]
+    return " ".join(tokens).strip()
 
-        # Placeholder - will be implemented
-        return ingredients, 0.0
 
-    async def suggest_bulk_items(
-        self, ingredients: dict[str, Any]
-    ) -> list[str]:
-        """
-        Suggest items that could be bought in bulk for savings.
-
-        Args:
-            ingredients: Ingredient list
-
-        Returns:
-            List of bulk buying suggestions
-
-        TODO: Implement bulk suggestion logic
-        TODO: Add cost-benefit analysis
-        """
-        logger.info("Identifying bulk buying opportunities")
-
-        # Placeholder - will be implemented
-        return []
-
-    async def optimize_shopping_order(
-        self, categorized_items: dict[str, list[dict[str, Any]]]
-    ) -> list[str]:
-        """
-        Suggest optimal shopping order based on store layout.
-
-        Args:
-            categorized_items: Items organized by category
-
-        Returns:
-            Ordered list of categories for efficient shopping
-
-        TODO: Implement ordering logic
-        TODO: Add store-specific layouts
-        """
-        logger.info("Optimizing shopping order")
-
-        # Placeholder - will be implemented
-        return list(categorized_items.keys())
+def _matches_available(name: str, available_normalized: set[str]) -> bool:
+    """
+    Match against pre-normalized user availability list. Both sides go
+    through `_normalize_ingredient`, then we do bidirectional substring
+    matching so "chicken" matches "chicken thigh" and vice versa.
+    """
+    needle = _normalize_ingredient(name)
+    if not needle:
+        return False
+    for avail in available_normalized:
+        if not avail:
+            continue
+        if avail in needle or needle in avail:
+            return True
+    return False

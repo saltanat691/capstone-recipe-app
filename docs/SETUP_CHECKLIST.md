@@ -163,8 +163,11 @@ pip install -r requirements.txt
 
 **Setup environment variables:**
 
+The API reads from `<repo-root>/.env`. Create it once from the monorepo
+template at the repo root:
+
 ```bash
-# Copy example env file
+# From the repo root (not apps/api)
 cp .env.example .env
 
 # Verify .env contains correct values
@@ -1072,6 +1075,313 @@ curl -X POST http://localhost:4000/api/v1/recommendations \
 # Check it appears in traces (Grafana → Tempo)
 # Verify recipes are relevant to request
 ```
+
+---
+
+## Nutrition Agent
+
+The Nutrition Agent sits in the LangGraph workflow at:
+`ingredient → recipe_retrieval → nutrition → final_response`.
+
+### What it does
+
+Enriches each recommended recipe with an estimated per-serving nutrition profile (`calories`, `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, `sugar_g`, `sodium_mg`), a `confidence` level (`low` / `medium` / `high`), and safety `warnings`.
+
+**Important:**
+- All nutrition values are **estimates**, not measurements. Every `health_notes` block opens with the disclaimer: _"All nutritional values are rough estimates and not medical advice."_
+- The agent does **not provide medical advice**.
+- A **deterministic safety check** runs alongside the LLM and adds warnings like `"Recipe may conflict with restriction: no_pork."` whenever an ingredient matches the dietary-restriction blocklist or an `excluded_ingredients` entry — even if the LLM missed it.
+
+### LLM fallback behavior
+
+The endpoint **never fails because of nutrition**:
+- No `OPENAI_API_KEY` set → low-confidence fallback notes with the safety warnings still attached.
+- Per-recipe LLM error → only that recipe gets a fallback note; the others return normal estimates.
+- No retrieved recipes → `nutrition_notes` is empty, no LLM call is issued.
+
+### Prerequisites
+
+- ✅ `OPENAI_API_KEY` set in `apps/api/.env`
+- ✅ Recipes embedded: `cd apps/api && python scripts/embed_recipes.py`
+- ✅ API restarted so it picks up `.env`
+
+### Test the endpoint
+
+**Happy path:**
+
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "halal weeknight dinner with chicken and rice",
+    "available_ingredients": ["chicken", "rice"]
+  }' \
+  | jq '{
+      names: [.recommendations[].name],
+      nutrition_notes,
+      warnings
+    }'
+```
+
+Expected:
+- `nutrition_notes` non-empty, opening with the disclaimer
+- `warnings` is `[]` for a clean request (per-recipe macros, confidence levels, and structured nutrition entries are logged server-side rather than returned in the API response)
+
+**Restriction warning path:**
+
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"pasta carbonara with bacon","dietary_restrictions":["no pork"]}' \
+  | jq '.warnings'
+```
+Expected: at least one entry contains `"Recipe may conflict with restriction: no_pork."` if any returned recipe carries a pork-family ingredient.
+
+**LLM-down (fallback) path** — temporarily unset the key:
+
+```bash
+cd apps/api && source .venv/bin/activate
+OPENAI_API_KEY= python -c "
+import asyncio
+from app.agents.nutrition_agent import NutritionAgent, NutritionAgentInput
+from app.services.rag_recipe_service import RetrievedRecipe
+r = RetrievedRecipe(id=1, name='Bacon Bowl', cuisine='Italian',
+                    ingredients=['bacon','eggs'], score=0.5, match_reason='x')
+out = asyncio.run(NutritionAgent().enrich_recipes(NutritionAgentInput(
+    recipes=[r], dietary_restrictions=['no pork']
+)))
+print(out.notes[0].model_dump_json(indent=2))
+"
+```
+Expected: `confidence="low"`, `warnings` contains both `"Recipe may conflict with restriction: no_pork."` and `"Estimation failed: ..."`.
+
+### Run the test suite
+
+```bash
+cd apps/api && source .venv/bin/activate && pytest -v
+```
+- `tests/test_nutrition_agent.py` — fallback + deterministic safety (no OpenAI required)
+- `tests/test_recommendations_endpoint.py::test_recommendations_endpoint_exposes_nutrition_notes` — end-to-end (requires `OPENAI_API_KEY`; otherwise skipped)
+
+✅ **Pass criteria:** every successful `/recommendations` response includes a non-empty `nutrition_notes` string, and restriction conflicts always surface in the top-level `warnings` array (structured per-recipe nutrition stays in server logs).
+
+---
+
+## Menu Planner Agent
+
+The Menu Planner Agent sits in the LangGraph workflow at:
+`ingredient → recipe_retrieval → nutrition → menu_planner → final_response`.
+
+### What it does
+
+- Builds an n-day menu plan from the retrieved recipes using `langchain-openai` structured output.
+- Reads `days` and `requested_meal_types` from the Ingredient Agent (e.g. "3-day dinner menu" → `days=3`, `requested_meal_types=["dinner"]`).
+- Prefers cuisine matches, uses available ingredients early, avoids same-recipe consecutive days.
+- Falls back to a deterministic round-robin if the LLM is unavailable.
+- Runs a **deterministic validator** on every plan (LLM or fallback) that adds warnings for: restricted-ingredient conflicts, excluded-ingredient conflicts, consecutive-day repeats, and day-count mismatches.
+
+### When you get a menu plan
+
+| Request shape | `menu_plan` in response |
+|---|---|
+| No `days` field, no multi-day intent in the message | `null` — recommendations only |
+| `days` provided, OR message says "week"/"weekly"/"N days" | Populated `MenuPlan` with the requested number of days |
+| LLM fails / unavailable | Round-robin fallback with a `"Menu planner LLM unavailable: ..."` warning |
+
+### Example request
+
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "3-day dinner menu with chicken and rice, no pork",
+    "available_ingredients": ["chicken", "rice"],
+    "days": 3
+  }' \
+  | jq '{
+      menu_days: (.menu_plan.days | length),
+      first_day_meals: (.menu_plan.days[0].meals | keys),
+      total_days: .menu_plan.total_days,
+      warnings,
+      grocery_list
+    }'
+```
+
+Expected:
+- `menu_days: 3`
+- `first_day_meals: ["dinner"]`
+- `summary` non-empty
+- `menu_warnings` empty (or `"Recipe 'X' appears on consecutive days N and N+1."` if there were few recipes)
+- `grocery_list: null` (not implemented yet)
+
+### Example response (trimmed)
+
+```json
+{
+  "menu_plan": {
+    "days": [
+      { "day": 1, "meals": { "dinner": { "name": "Chicken Plov" } } },
+      { "day": 2, "meals": { "dinner": { "name": "Lagman" } } },
+      { "day": 3, "meals": { "dinner": { "name": "Manti" } } }
+    ],
+    "total_days": 3,
+    "servings": 2
+  },
+  "grocery_list": null,
+  "warnings": []
+}
+```
+
+Note: structured agent diagnostics (the menu summary, per-meal `reason`, validator warnings) live on `response.metadata` server-side for logging, tracing, and debugging. They are not serialized in the public API response. Safety warnings from the nutrition and menu validators are merged into the top-level `warnings`.
+
+### Test multi-meal and multi-day intents
+
+**Multi-meal-type:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"plan breakfast lunch and dinner for 3 days"}' \
+  | jq '.menu_plan.days[0].meals | keys'
+```
+Expected: `["breakfast","dinner","lunch"]`.
+
+**Inferred from text:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"plan a week of dinners"}' \
+  | jq '.menu_plan.days | length'
+```
+Expected: `7`.
+
+**No menu without days:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"what can I make with chicken and rice for dinner?"}' \
+  | jq '.menu_plan'
+```
+Expected: `null`.
+
+### Run the test suite
+
+```bash
+cd apps/api && source .venv/bin/activate && pytest -v
+```
+- `tests/test_menu_planner_agent.py` — short-circuit, fallback, validator, restriction handling (no OpenAI required)
+- `tests/test_recommendations_endpoint.py::test_recommendations_endpoint_returns_menu_plan_when_days_provided` — end-to-end with days (integration; requires `OPENAI_API_KEY`)
+- `tests/test_recommendations_endpoint.py::test_recommendations_endpoint_keeps_menu_plan_null_without_days` — end-to-end without days (integration)
+
+### Current limitations
+
+- **Menu planning runs only when `days` is provided** (explicitly via the API field or implied in the message like "week"/"weekly"/"N days"). Pure recommendation requests skip the planner and `menu_plan` stays `null`.
+- **No date assignments.** Only day numbers (1-based) are produced.
+- **`meal_type` defaults to `"dinner"`** when retrieved recipes don't carry meal-type metadata.
+- **The Menu Planner has graceful LLM fallback**, but the upstream Ingredient Agent does not — if `OPENAI_API_KEY` is missing the request fails with HTTP 500 before reaching the planner.
+
+✅ **Pass criteria:** with `days` provided, `menu_plan` is non-null and has exactly the requested number of days; without `days`, `menu_plan` is `null`.
+
+---
+
+## Grocery List Agent
+
+The Grocery List Agent sits in the LangGraph workflow at:
+`ingredient → recipe_retrieval → nutrition → menu_planner → grocery_list → final_response`.
+
+### What it does
+
+- Aggregates ingredients from every recipe referenced by the menu plan (deduped, case-insensitive).
+- Marks user-supplied ingredients as `already_available: true` using a deterministic normalizer that handles plurals and common descriptors. So `"chicken"` matches `"chicken thighs"`, `"rice"` matches `"long-grain rice"`, `"carrot"` matches `"carrots"`, etc.
+- Categorizes each item into one of: `meat`, `vegetables`, `fruits`, `dairy`, `grains`, `pantry`, `spices`, `other`.
+- When `OPENAI_API_KEY` is configured, asks the LLM to estimate per-ingredient quantities and units. Allowed units are `kg`, `g`, `pcs`, `bunch`, `tbsp`, `tsp`, `liters`. Estimates always carry the warning *"Quantities are estimates because recipe ingredient amounts are incomplete."*
+- Falls back gracefully if the LLM is unavailable: items still appear, but `quantity` and `unit` are `null` and no estimate warning is added.
+
+### When you get a grocery list
+
+The simple rule: **`grocery_list` is populated only when `menu_plan` exists.**
+
+| Request | `grocery_list` |
+|---|---|
+| `days` provided (or multi-day intent like "week"/"N days") | populated |
+| No `days`, no multi-day intent | `null` |
+| User asks "grocery list" / "shopping list" without `days` | `null` + a warning telling them to provide `days` |
+| LLM unavailable | populated, but with `quantity: null` / `unit: null` |
+
+### Prerequisites
+
+- ✅ `OPENAI_API_KEY` set in `apps/api/.env`
+- ✅ Recipes embedded (`cd apps/api && python scripts/embed_recipes.py`)
+- ✅ API restarted so it picks up `.env`
+
+### Test the endpoint
+
+**Happy path:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "3-day dinner menu with chicken and rice",
+    "available_ingredients": ["chicken", "rice", "carrot"],
+    "days": 3,
+    "servings": 4
+  }' \
+  | jq '{
+      total: .grocery_list.total_items,
+      categories: (.grocery_list.categories | keys),
+      on_hand: [.grocery_list.items[] | select(.already_available) | .ingredient],
+      first_three: .grocery_list.items[:3],
+      warnings
+    }'
+```
+
+Expected:
+- `total > 0`
+- `categories` contains at least `meat`, `grains`, `vegetables` (categorizer working).
+- `on_hand` lists items matched by normalization (e.g. `"chicken thighs"`, `"long-grain rice"`, `"carrots"`).
+- `first_three` items have `category`, `already_available`, and (when the LLM ran) `quantity` + `unit`.
+- `warnings` may contain `"Quantities are estimates because recipe ingredient amounts are incomplete."`.
+
+**No menu without days:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"what can I make with chicken and rice for dinner?"}' \
+  | jq '{menu_plan, grocery_list}'
+```
+Expected: both `null`.
+
+**Grocery list requested without days surfaces a warning:**
+```bash
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Give me a grocery list"}' \
+  | jq '{grocery_list, warnings}'
+```
+Expected: `grocery_list: null`, `warnings` contains `"Grocery list requested but no menu plan was produced. Provide \`days\` or describe a multi-day plan to receive a grocery list."`.
+
+### Run the test suite
+
+```bash
+cd apps/api && source .venv/bin/activate && pytest -v
+```
+- `tests/test_grocery_list_agent.py` — null short-circuit, ingredient inclusion, normalization-driven matching, categorization, deterministic fallback (no OpenAI required)
+- `tests/test_grocery_list_agent.py::TestLLMQuantityLayer` — LLM quantity estimation (integration; requires `OPENAI_API_KEY`)
+- `tests/test_recommendations_endpoint.py::test_recommendations_endpoint_returns_grocery_list_when_days_provided` — end-to-end with days (integration)
+- `tests/test_recommendations_endpoint.py::test_recommendations_endpoint_keeps_grocery_list_null_without_days` — end-to-end without days (integration)
+
+### Current limitations
+
+- **Generated only when `menu_plan` exists.** No menu plan → no grocery list.
+- **Quantities are estimates** — never treat them as exact shopping amounts. The estimate disclaimer is always present when the LLM populated quantities.
+- **Already-available items stay in the list** with `already_available: true` (not silently removed) so callers can render an explicit "you already have this" indicator.
+- **No quantity aggregation across recipes.** Each unique ingredient gets one estimate that combines all uses; not a literal sum.
+- **No cost estimation.** `estimated_cost` / `estimated_total_cost` are always `null`.
+- **Units limited** to the seven practical units listed above; anything else from the LLM is dropped to `null`.
+- **Categorization is keyword-based.** Unrecognized ingredients land in `"other"`.
+
+✅ **Pass criteria:** with `days` provided, `grocery_list` is non-null, has at least one item, `total_items == len(items)`, and on-hand ingredients are flagged `already_available: true`; without `days`, `grocery_list` is `null`.
+
+---
 
 🎉 **Congratulations! Your Recipe AI System is ready!**
 

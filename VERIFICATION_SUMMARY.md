@@ -44,7 +44,7 @@
    - Username: `recipe_user` ✅
    - Password: `recipe_password` ✅
    - Database: `recipe_ai` ✅
-   - All `.env.example` files consistent ✅
+   - Root `.env.example` is the single monorepo-wide template ✅
 
 3. **Docker Services**
    - All container names consistent ✅
@@ -97,12 +97,18 @@ extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullabl
    ```
 
 2. **Setup Backend**
+
+   The API reads from `<repo-root>/.env`. Create it once from the monorepo
+   template at the repo root before installing the API:
    ```bash
+   # From the repo root
+   cp .env.example .env
+
+   # Then install the API
    cd apps/api
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env
    ```
 
 3. **Run Migrations**

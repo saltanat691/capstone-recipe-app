@@ -2,6 +2,7 @@
 Pydantic schemas for API requests and responses.
 """
 
+from app.schemas.nutrition import NutritionEstimate, NutritionNote
 from app.schemas.recommendation import (
     GroceryItem,
     GroceryList,
@@ -20,4 +21,6 @@ __all__ = [
     "MenuDay",
     "GroceryList",
     "GroceryItem",
+    "NutritionEstimate",
+    "NutritionNote",
 ]
