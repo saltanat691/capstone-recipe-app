@@ -11,6 +11,7 @@ from typing import Optional
 
 from app.core.config import settings
 from app.observability import get_logger
+from app.observability.metrics import record_cache_hit, record_cache_miss
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,9 @@ async def get_embedding(query: str) -> Optional[list[float]]:
         await client.aclose()
         if raw:
             logger.debug("embedding_cache_hit", extra={"query_len": len(query)})
+            record_cache_hit()
             return json.loads(raw)
+        record_cache_miss()
     except Exception as exc:
         logger.warning("embedding_cache_get_failed", extra={"error": str(exc)})
     return None

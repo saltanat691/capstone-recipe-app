@@ -24,6 +24,7 @@ from app.models.user_preference import UserPreference
 
 # Observability imports
 from app.observability.logging import setup_logging
+from app.observability.metrics import setup_metrics
 from app.observability.tracing import (
     setup_tracing,
     instrument_fastapi,
@@ -38,6 +39,7 @@ from app.core.llm_config import setup_langsmith, check_llm_configuration
 # Initialize observability and LLM tracing early
 setup_logging()
 setup_tracing()
+setup_metrics()
 instrument_database()
 setup_langsmith()
 check_llm_configuration()

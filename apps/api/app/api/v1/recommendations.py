@@ -5,6 +5,7 @@ Backed by the LangGraph workflow (ingredient agent + RAG retrieval +
 nutrition agent).
 """
 
+import time
 import uuid
 from typing import Optional
 
@@ -17,9 +18,16 @@ from app.core.llm_config import tracing_scope
 from app.core.rate_limit import limiter
 from app.models.api_key import ApiKey
 from app.observability import get_logger
+from app.observability.metrics import (
+    record_filter_rejection,
+    record_latency,
+    record_recommendations,
+    record_request,
+)
 from app.observability.tracing import get_current_trace_id
 from app.schemas.recommendation import RecommendationRequest, RecommendationResponse
 from app.services.content_filter import ContentPolicyViolation, check as content_check
+from app.services.diversity import cuisine_diversity_warning
 from app.services.pii_scrubber import scrub, scrub_list
 
 logger = get_logger(__name__)
@@ -44,6 +52,7 @@ async def create_recommendations(
 ) -> RecommendationResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
     trace_id = get_current_trace_id() or ""
+    _t0 = time.monotonic()
 
     # Scrub PII before it reaches any LLM or tracer.
     safe_message = scrub(request_data.message)
@@ -53,6 +62,8 @@ async def create_recommendations(
     try:
         await content_check(safe_message)
     except ContentPolicyViolation as exc:
+        record_filter_rejection()
+        record_request(status="rejected")
         raise HTTPException(
             status_code=400,
             detail=f"Request contains content that violates usage policy: {', '.join(exc.categories)}.",
@@ -152,8 +163,18 @@ async def create_recommendations(
     if not response.recommendations and not response.warnings:
         response.warnings = ["No recipes found matching your criteria"]
 
+    # Cuisine diversity check — warn when results are geographically skewed.
+    cuisines = [r.cuisine for r in response.recommendations]
+    diversity_warn = cuisine_diversity_warning(cuisines)
+    if diversity_warn:
+        response.warnings = [*response.warnings, diversity_warn]
+
     if not response.trace_id:
         response.trace_id = trace_id
+
+    record_request(status="success")
+    record_recommendations(len(response.recommendations))
+    record_latency((time.monotonic() - _t0) * 1000)
 
     logger.info(
         "Recommendation request complete",
