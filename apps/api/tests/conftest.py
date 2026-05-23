@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+# Ensure DATABASE_URL is always set so Settings() doesn't fail during
+# collection in environments without a .env file (CI, remote containers).
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+
 # Load env files before tests collect, so module-level imports that read
 # settings see the values. Root .env is primary (monorepo-wide); the
 # legacy apps/api/.env is loaded second with override=True so local

@@ -5,11 +5,13 @@ API v1 router - main router for v1 endpoints.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.api.v1.auth import router as auth_router
 from app.api.v1.recommendations import router as recommendations_router
 
 router = APIRouter()
 
 # Include sub-routers
+router.include_router(auth_router)
 router.include_router(recommendations_router)
 
 

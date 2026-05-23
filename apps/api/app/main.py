@@ -2,7 +2,9 @@
 FastAPI application entry point.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
@@ -10,11 +12,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy import delete
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.api.health import router as health_router
 from app.api.v1.router import router as api_v1_router
+from app.db.session import AsyncSessionLocal
+from app.models.agent_run import AgentRun
+from app.models.user_preference import UserPreference
 
 # Observability imports
 from app.observability.logging import setup_logging
@@ -37,6 +43,29 @@ setup_langsmith()
 check_llm_configuration()
 
 
+async def _retention_cleanup_loop() -> None:
+    """Delete expired agent_runs and user_preferences every hour."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    delete(AgentRun).where(
+                        AgentRun.expires_at.isnot(None), AgentRun.expires_at <= now
+                    )
+                )
+                await db.execute(
+                    delete(UserPreference).where(
+                        UserPreference.expires_at.isnot(None),
+                        UserPreference.expires_at <= now,
+                    )
+                )
+                await db.commit()
+        except Exception:
+            pass  # non-fatal; next iteration will retry
+        await asyncio.sleep(3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -54,7 +83,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(f"API docs at: http://localhost:{settings.API_PORT}/docs")
     print("=" * 60)
 
+    cleanup_task = asyncio.create_task(_retention_cleanup_loop())
+
     yield
+
+    cleanup_task.cancel()
 
     # Shutdown
     print(f"\nShutting down {settings.APP_NAME}")

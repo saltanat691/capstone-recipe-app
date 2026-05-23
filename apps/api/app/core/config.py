@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     USDA_API_KEY: str = ""
     USDA_API_BASE_URL: str = "https://api.nal.usda.gov/fdc/v1"
 
+    # Auth
+    REQUIRE_AUTH: bool = False
+
+    # Data retention (days until agent_runs / user_preferences are purged)
+    DATA_RETENTION_DAYS: int = 90
+
     # Production safety
     LLM_TIMEOUT_SECONDS: float = 30.0
     MAX_REQUEST_BYTES: int = 1_048_576  # 1 MB

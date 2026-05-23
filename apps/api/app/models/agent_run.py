@@ -5,7 +5,7 @@ Agent run model for tracking AI agent executions.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -59,6 +59,11 @@ class AgentRun(Base, TimestampMixin):
 
     # Metadata stored as JSON (flexible for additional information)
     extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+
+    # Retention: NULL means keep forever; set to enforce automated cleanup.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<AgentRun(id={self.id}, run_id='{self.run_id}', agent_type='{self.agent_type}', status='{self.status}')>"

@@ -8,14 +8,18 @@ nutrition agent).
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.agents.graph import get_agent_graph
+from app.core.auth import get_api_key
 from app.core.config import settings
+from app.core.llm_config import tracing_scope
 from app.core.rate_limit import limiter
+from app.models.api_key import ApiKey
 from app.observability import get_logger
 from app.observability.tracing import get_current_trace_id
 from app.schemas.recommendation import RecommendationRequest, RecommendationResponse
+from app.services.pii_scrubber import scrub, scrub_list
 
 logger = get_logger(__name__)
 
@@ -35,37 +39,46 @@ router = APIRouter(tags=["Recommendations"])
 async def create_recommendations(
     request: Request,
     request_data: RecommendationRequest,
+    api_key: Optional[ApiKey] = Depends(get_api_key),
 ) -> RecommendationResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
     trace_id = get_current_trace_id() or ""
+
+    # Scrub PII before it reaches any LLM or tracer.
+    safe_message = scrub(request_data.message)
+    safe_ingredients = scrub_list(request_data.available_ingredients)
 
     logger.info(
         "Received recommendation request",
         extra={
             "request_id": request_id,
-            "message_length": len(request_data.message),
-            "ingredients": len(request_data.available_ingredients or []),
+            "message_length": len(safe_message),
+            "ingredients": len(safe_ingredients or []),
             "restrictions": len(request_data.dietary_restrictions or []),
             "days": request_data.days,
         },
     )
 
     explicit_inputs: dict = {
-        "available_ingredients": request_data.available_ingredients,
+        "available_ingredients": safe_ingredients,
         "dietary_restrictions": request_data.dietary_restrictions,
         "cuisine_preferences": request_data.cuisine_preferences,
         "servings": request_data.servings,
         "days": request_data.days,
     }
 
+    # Honour per-key tracing consent (default True when no key supplied).
+    tracing_allowed = api_key.tracing_consent if api_key else True
+
     try:
         graph = get_agent_graph()
-        final_state = await graph.invoke(
-            raw_user_input=request_data.message,
-            explicit_inputs=explicit_inputs,
-            request_id=request_id,
-            trace_id=trace_id,
-        )
+        async with tracing_scope(tracing_allowed):
+            final_state = await graph.invoke(
+                raw_user_input=safe_message,
+                explicit_inputs=explicit_inputs,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
     except RuntimeError as e:
         # Surfaced by IngredientAgent / rag_recipe_service when configuration
         # (e.g. OPENAI_API_KEY) or the LLM call itself fails.

@@ -3,7 +3,8 @@ LLM and LangSmith configuration for AI agent tracing.
 """
 
 import os
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Optional
 
 from app.core.config import settings
 from app.observability import get_logger
@@ -51,6 +52,23 @@ def setup_langsmith() -> None:
             "endpoint": settings.LANGSMITH_ENDPOINT,
         },
     )
+
+
+@asynccontextmanager
+async def tracing_scope(enabled: bool) -> AsyncGenerator[None, None]:
+    """Temporarily disable LangSmith tracing for a single request when consent is False."""
+    if enabled:
+        yield
+        return
+    old = os.environ.get("LANGCHAIN_TRACING_V2")
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("LANGCHAIN_TRACING_V2", None)
+        else:
+            os.environ["LANGCHAIN_TRACING_V2"] = old
 
 
 def get_llm_api_key(provider: str = "openai") -> Optional[str]:

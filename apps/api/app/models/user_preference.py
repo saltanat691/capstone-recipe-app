@@ -2,9 +2,10 @@
 User preferences model.
 """
 
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -45,6 +46,11 @@ class UserPreference(Base, TimestampMixin):
 
     # Additional notes
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Retention: NULL means keep forever; set to enforce automated cleanup.
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<UserPreference(id={self.id}, user_id='{self.user_id}')>"
