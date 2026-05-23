@@ -95,7 +95,7 @@ services:
       # Override the localhost-style URLs in .env so the container talks to
       # sibling services on the docker network instead of the host machine.
       DATABASE_URL: postgresql://recipe_user:recipe_password@postgres:5432/recipe_ai
-      ALEMBIC_DATABASE_URL: postgresql+psycopg://recipe_user:recipe_password@postgres:5432/recipe_ai
+      ALEMBIC_DATABASE_URL: postgresql+asyncpg://recipe_user:recipe_password@postgres:5432/recipe_ai
       OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
     ports:
       - "4000:4000"

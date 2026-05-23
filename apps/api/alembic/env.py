@@ -35,7 +35,7 @@ if config.config_file_name is not None:
 # Set the SQLAlchemy URL from ALEMBIC_DATABASE_URL env var
 alembic_db_url = os.getenv(
     "ALEMBIC_DATABASE_URL",
-    "postgresql+psycopg://recipe_user:recipe_password@localhost:5432/recipe_ai"
+    "postgresql+asyncpg://recipe_user:recipe_password@localhost:5432/recipe_ai"
 )
 config.set_main_option("sqlalchemy.url", alembic_db_url)
 
