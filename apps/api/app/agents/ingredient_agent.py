@@ -121,6 +121,7 @@ class IngredientAgent:
             model=self._model_name,
             api_key=settings.OPENAI_API_KEY,
             temperature=0,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
         )
         self._structured_llm = llm.with_structured_output(IngredientAgentOutput)
         return self._structured_llm

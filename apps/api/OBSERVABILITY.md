@@ -291,8 +291,8 @@ Configure observability via `.env`:
 OTEL_SERVICE_NAME=recipe-api
 ENVIRONMENT=development
 
-# OpenTelemetry
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+# OpenTelemetry — must point at Tempo's OTLP **HTTP** receiver (port 4318)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_TRACES_EXPORTER=otlp
 OTEL_METRICS_EXPORTER=otlp
 OTEL_LOGS_EXPORTER=otlp

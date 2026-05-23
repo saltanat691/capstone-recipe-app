@@ -18,6 +18,9 @@ python-dotenv==1.0.1
 # CORS
 python-multipart==0.0.12
 
+# Rate limiting
+slowapi>=0.1.9,<0.2.0
+
 # OpenTelemetry / Observability
 opentelemetry-api==1.27.0
 opentelemetry-sdk==1.27.0

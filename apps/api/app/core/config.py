@@ -3,18 +3,32 @@ Application configuration using Pydantic settings.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Repo layout:
+# Repo layout when running from source:
 #   <repo-root>/.env                  <- primary, monorepo-wide
 #   <repo-root>/apps/api/.env         <- optional local override (legacy)
 # Both paths are resolved from this file so the API picks up the same
-# values regardless of cwd.
+# values regardless of cwd. Inside the Docker image the layout is flatter
+# (/app/app/core/config.py) and these parents do not exist — in that case
+# we silently skip the .env files and rely on environment variables
+# injected by docker-compose / the container runtime.
 _THIS_FILE = Path(__file__).resolve()
-_ROOT_ENV = _THIS_FILE.parents[4] / ".env"
-_LOCAL_ENV = _THIS_FILE.parents[2] / ".env"
+
+
+def _safe_parent_env(parents_index: int) -> Optional[Path]:
+    try:
+        candidate = _THIS_FILE.parents[parents_index] / ".env"
+    except IndexError:
+        return None
+    return candidate
+
+
+_ROOT_ENV = _safe_parent_env(4)
+_LOCAL_ENV = _safe_parent_env(2)
+_ENV_FILES = tuple(p for p in (_ROOT_ENV, _LOCAL_ENV) if p is not None)
 
 
 class Settings(BaseSettings):
@@ -41,7 +55,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str
 
     # OpenTelemetry
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
+    # Default endpoint is the OTLP HTTP receiver on Tempo (port 4318).
+    # If you change this, point it at the *HTTP* receiver, not the gRPC one.
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4318"
     OTEL_SERVICE_NAME: str = "recipe-api"
     OTEL_TRACES_EXPORTER: str = "otlp"
     OTEL_METRICS_EXPORTER: str = "otlp"
@@ -64,8 +80,15 @@ class Settings(BaseSettings):
     USDA_API_KEY: str = ""
     USDA_API_BASE_URL: str = "https://api.nal.usda.gov/fdc/v1"
 
+    # Production safety
+    LLM_TIMEOUT_SECONDS: float = 30.0
+    MAX_REQUEST_BYTES: int = 1_048_576  # 1 MB
+    RATE_LIMIT_PER_MINUTE: int = 10
+
     model_config = SettingsConfigDict(
-        env_file=(_ROOT_ENV, _LOCAL_ENV),  # later wins; local overrides root
+        # None entries are filtered out; later entries win. Inside Docker
+        # both come back empty and Settings reads from os.environ only.
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

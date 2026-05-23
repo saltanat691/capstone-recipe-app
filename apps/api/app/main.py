@@ -7,8 +7,12 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.api.health import router as health_router
 from app.api.v1.router import router as api_v1_router
 
@@ -20,6 +24,7 @@ from app.observability.tracing import (
     instrument_database,
 )
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.request_size import RequestSizeLimitMiddleware
 
 # LLM configuration
 from app.core.llm_config import setup_langsmith, check_llm_configuration
@@ -70,6 +75,16 @@ def create_application() -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
         lifespan=lifespan,
+    )
+
+    # Wire the rate limiter and its exception handler.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+    app.add_middleware(SlowAPIMiddleware)
+
+    # Reject oversized request bodies before they hit the handler.
+    app.add_middleware(
+        RequestSizeLimitMiddleware, max_bytes=settings.MAX_REQUEST_BYTES
     )
 
     # Add Request ID middleware (before other middleware)

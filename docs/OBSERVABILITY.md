@@ -53,10 +53,10 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 trace.set_tracer_provider(TracerProvider())
 tracer = trace.get_tracer(__name__)
 
-# Configure OTLP exporter
+# Configure OTLP exporter — Tempo's OTLP HTTP receiver runs on port 4318.
+# (Port 4317 is the gRPC receiver; we use the HTTP exporter here.)
 otlp_exporter = OTLPSpanExporter(
-    endpoint="http://localhost:4317",
-    insecure=True
+    endpoint="http://localhost:4318/v1/traces",
 )
 
 # Add span processor

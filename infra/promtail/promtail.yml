@@ -1,0 +1,56 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Discover the recipe-api / recipe-web containers via Docker, parse their
+  # JSON log lines, and forward to Loki with useful labels (level, event,
+  # node, agent, request_id, trace_id).
+  - job_name: recipe-app-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values: ["recipe-api", "recipe-web"]
+    relabel_configs:
+      # Strip the leading "/" Docker prepends to container names.
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+      # Stable "service" label for LogQL queries; matches OTel service.name.
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/recipe-api"
+        target_label: service
+        replacement: "recipe-api"
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/recipe-web"
+        target_label: service
+        replacement: "recipe-web"
+    pipeline_stages:
+      # Unwrap Docker's JSON envelope to get the raw stdout line.
+      - docker: {}
+      # The API emits JSON via python-json-logger. Extract a few fields
+      # as labels so we can filter on them in Grafana.
+      - json:
+          expressions:
+            level: level
+            event: event
+            request_id: request_id
+            trace_id: trace_id
+            node: node
+            agent: agent
+      - labels:
+          level:
+          event:
+          node:
+          agent:

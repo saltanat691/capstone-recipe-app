@@ -11,6 +11,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 
 from app.agents.graph import get_agent_graph
+from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.observability import get_logger
 from app.observability.tracing import get_current_trace_id
 from app.schemas.recommendation import RecommendationRequest, RecommendationResponse
@@ -29,9 +31,10 @@ router = APIRouter(tags=["Recommendations"])
         "workflow (ingredient agent + RAG retrieval + nutrition agent)."
     ),
 )
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def create_recommendations(
-    request_data: RecommendationRequest,
     request: Request,
+    request_data: RecommendationRequest,
 ) -> RecommendationResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
     trace_id = get_current_trace_id() or ""
@@ -68,8 +71,14 @@ async def create_recommendations(
         # (e.g. OPENAI_API_KEY) or the LLM call itself fails.
         message = str(e)
         logger.error(
-            "Workflow runtime error",
-            extra={"request_id": request_id, "error": message},
+            "api_event",
+            extra={
+                "event": "api_error",
+                "kind": "workflow_runtime_error",
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "error": message,
+            },
             exc_info=True,
         )
         if "OPENAI_API_KEY" in message:
@@ -83,8 +92,14 @@ async def create_recommendations(
         ) from e
     except Exception as e:
         logger.error(
-            "Workflow unexpected error",
-            extra={"request_id": request_id, "error": str(e)},
+            "api_event",
+            extra={
+                "event": "api_error",
+                "kind": "workflow_unexpected_error",
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "error": str(e),
+            },
             exc_info=True,
         )
         raise HTTPException(
@@ -95,8 +110,13 @@ async def create_recommendations(
     response: Optional[RecommendationResponse] = final_state.get("final_response")
     if response is None:
         logger.error(
-            "Workflow produced no final_response",
-            extra={"request_id": request_id},
+            "api_event",
+            extra={
+                "event": "api_error",
+                "kind": "no_final_response",
+                "request_id": request_id,
+                "trace_id": trace_id,
+            },
         )
         raise HTTPException(
             status_code=500,

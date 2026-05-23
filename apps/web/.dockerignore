@@ -1,0 +1,20 @@
+node_modules/
+.next/
+out/
+build/
+
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+
+# Docs / VCS noise
+*.md
+.git/
+.gitignore
+.github/
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/

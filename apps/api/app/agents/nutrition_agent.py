@@ -113,6 +113,7 @@ class NutritionAgent:
             model=self._model_name,
             api_key=settings.OPENAI_API_KEY,
             temperature=0,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
         )
         self._structured_llm = llm.with_structured_output(_LLMNutritionEstimate)
         return self._structured_llm
@@ -128,7 +129,15 @@ class NutritionAgent:
         try:
             structured_llm = self._get_structured_llm()
         except RuntimeError as e:
-            logger.warning(f"NutritionAgent unavailable: {e}")
+            logger.warning(
+                "llm_event",
+                extra={
+                    "event": "llm_fallback",
+                    "agent": "nutrition_agent",
+                    "scope": "batch",
+                    "reason": str(e),
+                },
+            )
             return NutritionAgentOutput(
                 notes=[
                     self._fallback_note(recipe, agent_input, reason=str(e))
@@ -167,9 +176,15 @@ class NutritionAgent:
         try:
             estimate: _LLMNutritionEstimate = await structured_llm.ainvoke(prompt)
         except Exception as e:
-            logger.error(
-                "NutritionAgent LLM call failed",
-                extra={"recipe_id": recipe.id, "error": str(e)},
+            logger.warning(
+                "llm_event",
+                extra={
+                    "event": "llm_fallback",
+                    "agent": "nutrition_agent",
+                    "scope": "recipe",
+                    "recipe_id": recipe.id,
+                    "reason": str(e),
+                },
             )
             return self._fallback_note(recipe, agent_input, reason=str(e))
 

@@ -105,6 +105,7 @@ class MenuPlannerAgent:
             model=self._model_name,
             api_key=settings.OPENAI_API_KEY,
             temperature=0,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
         )
         self._structured_llm = llm.with_structured_output(MenuPlan)
         return self._structured_llm
@@ -148,7 +149,12 @@ class MenuPlannerAgent:
             return MenuPlannerAgentOutput(menu_plan=sanitized)
         except Exception as e:
             logger.warning(
-                f"MenuPlannerAgent LLM failed ({e}); falling back to round-robin"
+                "llm_event",
+                extra={
+                    "event": "llm_fallback",
+                    "agent": "menu_planner_agent",
+                    "reason": str(e),
+                },
             )
             return MenuPlannerAgentOutput(
                 menu_plan=self._deterministic_fallback(agent_input, reason=str(e))

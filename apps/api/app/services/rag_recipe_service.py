@@ -220,7 +220,10 @@ async def _embed_query(query: str) -> list[float]:
             "openai package not installed; run `pip install -r requirements.txt`."
         ) from e
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    client = AsyncOpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        timeout=settings.LLM_TIMEOUT_SECONDS,
+    )
     resp = await client.embeddings.create(
         model=settings.EMBEDDING_MODEL,
         input=[query],

@@ -35,9 +35,10 @@ def setup_tracing() -> None:
     # Create tracer provider
     provider = TracerProvider(resource=resource)
 
-    # Create OTLP exporter (HTTP to Tempo on port 4318)
+    # OTLP HTTP exporter. OTEL_EXPORTER_OTLP_ENDPOINT carries the base URL
+    # (default: http://localhost:4318); we append the /v1/traces path.
     otlp_exporter = OTLPSpanExporter(
-        endpoint=f"{settings.OTEL_EXPORTER_OTLP_ENDPOINT.replace(':4317', ':4318')}/v1/traces",
+        endpoint=f"{settings.OTEL_EXPORTER_OTLP_ENDPOINT.rstrip('/')}/v1/traces",
     )
 
     # Add batch span processor
@@ -49,7 +50,7 @@ def setup_tracing() -> None:
 
     print("✓ OpenTelemetry tracing initialized")
     print(f"  Service: {settings.OTEL_SERVICE_NAME}")
-    print(f"  Endpoint: {settings.OTEL_EXPORTER_OTLP_ENDPOINT.replace(':4317', ':4318')}/v1/traces")
+    print(f"  Endpoint: {settings.OTEL_EXPORTER_OTLP_ENDPOINT.rstrip('/')}/v1/traces")
 
 
 def instrument_fastapi(app) -> None:

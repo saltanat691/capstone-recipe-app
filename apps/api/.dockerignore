@@ -1,0 +1,28 @@
+# Local venvs and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+
+# Tests are run in CI, not bundled into the runtime image.
+tests/
+
+# Docs / VCS noise
+*.md
+.git/
+.gitignore
+.github/
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/

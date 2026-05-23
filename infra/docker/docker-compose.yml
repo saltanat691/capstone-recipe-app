@@ -71,6 +71,78 @@ services:
     networks:
       - recipe-network
 
+  # ---------------------------------------------------------------------------
+  # Application services. These live behind the `apps` profile so the default
+  # `docker-compose up -d` keeps shipping only the infra (Postgres + Grafana +
+  # Tempo + Loki). Run them with:
+  #     docker-compose --profile apps up -d
+  # ---------------------------------------------------------------------------
+
+  # FastAPI backend
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    image: recipe-api:local
+    container_name: recipe-api
+    profiles: ["apps"]
+    # Compose injects these into the container at startup. If your secrets
+    # currently live in apps/api/.env (legacy layout), either copy them to
+    # the repo-root .env or change the path below to ../../apps/api/.env.
+    env_file:
+      - ../../.env
+    environment:
+      # Override the localhost-style URLs in .env so the container talks to
+      # sibling services on the docker network instead of the host machine.
+      DATABASE_URL: postgresql://recipe_user:recipe_password@postgres:5432/recipe_ai
+      ALEMBIC_DATABASE_URL: postgresql+psycopg://recipe_user:recipe_password@postgres:5432/recipe_ai
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - recipe-network
+
+  # Promtail — tails Docker container stdout for the apps services and
+  # ships the JSON log lines to Loki. Only starts under the `apps` profile
+  # because there's nothing to scrape until the API/web containers run.
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: recipe-promtail
+    profiles: ["apps"]
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ../promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-data:/var/lib/promtail
+    depends_on:
+      - loki
+    networks:
+      - recipe-network
+
+  # Next.js frontend
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* must be set at build time. The frontend code runs in
+        # the user's browser, so it reaches the API via the host-side port.
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+    image: recipe-web:local
+    container_name: recipe-web
+    profiles: ["apps"]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - recipe-network
+
 volumes:
   postgres-data:
     driver: local
@@ -79,6 +151,8 @@ volumes:
   tempo-data:
     driver: local
   loki-data:
+    driver: local
+  promtail-data:
     driver: local
 
 networks:

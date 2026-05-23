@@ -111,6 +111,7 @@ class GroceryListAgent:
             model=self._model_name,
             api_key=settings.OPENAI_API_KEY,
             temperature=0,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
         )
         self._structured_llm = llm.with_structured_output(_LLMQuantities)
         return self._structured_llm
@@ -134,8 +135,12 @@ class GroceryListAgent:
                     warnings.append(llm_warning)
             except Exception as e:
                 logger.warning(
-                    f"GroceryListAgent quantity LLM failed ({e}); "
-                    "returning list without quantities"
+                    "llm_event",
+                    extra={
+                        "event": "llm_fallback",
+                        "agent": "grocery_list_agent",
+                        "reason": str(e),
+                    },
                 )
 
         items.sort(key=lambda i: (i.already_available, i.name.lower()))

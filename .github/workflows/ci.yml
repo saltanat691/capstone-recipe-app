@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Run separate workflows in parallel; cancel older runs of the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint + type + unit tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      # Required by pydantic-settings (Settings has no default for this field).
+      # The unit tests run with `-m "not integration"` so the DB is never
+      # actually touched in CI; this just lets Settings() instantiate.
+      DATABASE_URL: postgresql://stub:stub@localhost:5432/stub
+      # OPENAI_API_KEY intentionally unset — integration tests are excluded
+      # and the conftest fixture skips anything requiring it.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ruff (lint)
+        run: ruff check app
+
+      - name: Mypy (type check)
+        run: mypy app
+
+      - name: Pytest (unit tests, integration excluded)
+        run: pytest -m "not integration" -v
+
+  frontend:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      # NEXT_PUBLIC_* values are baked in at build time. CI just needs a
+      # placeholder so the build doesn't 500 when the variable is referenced.
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build

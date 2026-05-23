@@ -7,8 +7,10 @@ Linear pipeline:
           -> grocery_list_agent_node -> final_response_node -> END
 """
 
+import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from app.agents.grocery_list_agent import (
     GroceryListAgent,
@@ -45,6 +47,32 @@ from app.services.rag_recipe_service import (
 logger = get_logger(__name__)
 
 
+@asynccontextmanager
+async def _timed_node(
+    node: str, request_id: Optional[str]
+) -> AsyncIterator[None]:
+    """
+    Emit a structured `node_complete` log line with `request_id`, `node`,
+    and `duration_ms` once the wrapped block finishes. The line is always
+    emitted, including when the block raises — useful for spotting nodes
+    that crash or stall.
+    """
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        duration_ms = round((time.monotonic() - start) * 1000, 1)
+        logger.info(
+            "langgraph_node_complete",
+            extra={
+                "event": "node_complete",
+                "node": node,
+                "request_id": request_id,
+                "duration_ms": duration_ms,
+            },
+        )
+
+
 class RecipeAgentGraph:
     """
     LangGraph workflow that turns a free-text user message into a
@@ -63,114 +91,148 @@ class RecipeAgentGraph:
 
     async def _ingredient_agent_node(self, state: State) -> dict[str, Any]:
         """Run the ingredient agent over the raw message + explicit inputs."""
-        explicit = state.get("explicit_inputs") or {}
-        agent_input = IngredientAgentInput(
-            message=state.get("raw_user_input", "") or "",
-            available_ingredients=explicit.get("available_ingredients"),
-            dietary_restrictions=explicit.get("dietary_restrictions"),
-            cuisine_preferences=explicit.get("cuisine_preferences"),
-            servings=explicit.get("servings"),
-            days=explicit.get("days"),
-        )
-        output = await self.ingredient_agent.run(agent_input)
-        logger.info(
-            "ingredient_agent_node complete",
-            extra={
-                "request_id": state.get("request_id"),
-                "intent": output.user_intent,
-                "ingredients": len(output.available_ingredients),
-                "restrictions": len(output.dietary_restrictions),
-            },
-        )
-        return {"ingredient_agent_output": output}
+        async with _timed_node("ingredient_agent_node", state.get("request_id")):
+            explicit = state.get("explicit_inputs") or {}
+            agent_input = IngredientAgentInput(
+                message=state.get("raw_user_input", "") or "",
+                available_ingredients=explicit.get("available_ingredients"),
+                dietary_restrictions=explicit.get("dietary_restrictions"),
+                cuisine_preferences=explicit.get("cuisine_preferences"),
+                servings=explicit.get("servings"),
+                days=explicit.get("days"),
+            )
+            output = await self.ingredient_agent.run(agent_input)
+            logger.info(
+                "ingredient_agent_node complete",
+                extra={
+                    "request_id": state.get("request_id"),
+                    "intent": output.user_intent,
+                    "ingredients": len(output.available_ingredients),
+                    "restrictions": len(output.dietary_restrictions),
+                },
+            )
+            return {"ingredient_agent_output": output}
 
     async def _recipe_retrieval_node(self, state: State) -> dict[str, Any]:
         """Build a retrieval query from the intake and call the RAG service."""
-        intake = state.get("ingredient_agent_output")
-        warnings = list(state.get("warnings") or [])
+        async with _timed_node("recipe_retrieval_node", state.get("request_id")):
+            intake = state.get("ingredient_agent_output")
+            warnings = list(state.get("warnings") or [])
 
-        if intake is None:
-            warnings.append("recipe_retrieval skipped: no ingredient agent output")
-            return {"retrieved_recipes": [], "warnings": warnings}
+            if intake is None:
+                warnings.append(
+                    "recipe_retrieval skipped: no ingredient agent output"
+                )
+                return {"retrieved_recipes": [], "warnings": warnings}
 
-        query = _build_query(state.get("raw_user_input", "") or "", intake)
-        filters = RecipeSearchFilters(
-            dietary_restrictions=intake.dietary_restrictions,
-            excluded_ingredients=intake.excluded_ingredients,
-            cuisine_preferences=intake.cuisine_preferences,
-            available_ingredients=intake.available_ingredients,
-            max_cooking_time_minutes=intake.max_cooking_time_minutes,
-            meal_type=intake.meal_type,
-        )
+            query = _build_query(state.get("raw_user_input", "") or "", intake)
+            filters = RecipeSearchFilters(
+                dietary_restrictions=intake.dietary_restrictions,
+                excluded_ingredients=intake.excluded_ingredients,
+                cuisine_preferences=intake.cuisine_preferences,
+                available_ingredients=intake.available_ingredients,
+                max_cooking_time_minutes=intake.max_cooking_time_minutes,
+                meal_type=intake.meal_type,
+            )
 
-        recipes: list[RetrievedRecipe] = await retrieve_recipes(query, filters, limit=5)
-        if not recipes:
-            warnings.append("No recipes matched the request")
+            recipes: list[RetrievedRecipe] = await retrieve_recipes(
+                query, filters, limit=5
+            )
+            if not recipes:
+                warnings.append("No recipes matched the request")
+                logger.warning(
+                    "rag_event",
+                    extra={
+                        "event": "retrieval_empty",
+                        "request_id": state.get("request_id"),
+                        "query_len": len(query),
+                    },
+                )
 
-        logger.info(
-            "recipe_retrieval_node complete",
-            extra={
-                "request_id": state.get("request_id"),
-                "query_len": len(query),
-                "results": len(recipes),
-            },
-        )
-        return {"retrieved_recipes": recipes, "warnings": warnings}
+            logger.info(
+                "recipe_retrieval_node complete",
+                extra={
+                    "request_id": state.get("request_id"),
+                    "query_len": len(query),
+                    "results": len(recipes),
+                },
+            )
+            return {"retrieved_recipes": recipes, "warnings": warnings}
 
     async def _nutrition_agent_node(self, state: State) -> dict[str, Any]:
         """Enrich the retrieved recipes with nutrition notes."""
-        retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
-        if not retrieved:
-            return {"nutrition_notes": []}
+        async with _timed_node("nutrition_agent_node", state.get("request_id")):
+            retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
+            if not retrieved:
+                return {"nutrition_notes": []}
 
-        intake = state.get("ingredient_agent_output")
-        agent_input = NutritionAgentInput(
-            recipes=retrieved,
-            dietary_restrictions=list(getattr(intake, "dietary_restrictions", []) or []),
-            excluded_ingredients=list(getattr(intake, "excluded_ingredients", []) or []),
-            servings=int(getattr(intake, "servings", 2) or 2),
-            user_preferences=getattr(intake, "user_intent", None),
-        )
-        output = await self.nutrition_agent.enrich_recipes(agent_input)
-        logger.info(
-            "nutrition_agent_node complete",
-            extra={
-                "request_id": state.get("request_id"),
-                "notes": len(output.notes),
-            },
-        )
-        return {"nutrition_notes": output.notes}
+            intake = state.get("ingredient_agent_output")
+            agent_input = NutritionAgentInput(
+                recipes=retrieved,
+                dietary_restrictions=list(
+                    getattr(intake, "dietary_restrictions", []) or []
+                ),
+                excluded_ingredients=list(
+                    getattr(intake, "excluded_ingredients", []) or []
+                ),
+                servings=int(getattr(intake, "servings", 2) or 2),
+                user_preferences=getattr(intake, "user_intent", None),
+            )
+            output = await self.nutrition_agent.enrich_recipes(agent_input)
+            logger.info(
+                "nutrition_agent_node complete",
+                extra={
+                    "request_id": state.get("request_id"),
+                    "notes": len(output.notes),
+                },
+            )
+            return {"nutrition_notes": output.notes}
 
     async def _menu_planner_agent_node(self, state: State) -> dict[str, Any]:
         """Build an n-day menu plan from the retrieved recipes."""
-        retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
-        intake = state.get("ingredient_agent_output")
-        notes: list[NutritionNote] = state.get("nutrition_notes") or []
+        async with _timed_node("menu_planner_agent_node", state.get("request_id")):
+            retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
+            intake = state.get("ingredient_agent_output")
+            notes: list[NutritionNote] = state.get("nutrition_notes") or []
 
-        agent_input = MenuPlannerAgentInput(
-            recipes=retrieved,
-            nutrition_notes=notes,
-            available_ingredients=list(getattr(intake, "available_ingredients", []) or []),
-            dietary_restrictions=list(getattr(intake, "dietary_restrictions", []) or []),
-            excluded_ingredients=list(getattr(intake, "excluded_ingredients", []) or []),
-            cuisine_preferences=list(getattr(intake, "cuisine_preferences", []) or []),
-            requested_meal_types=list(getattr(intake, "requested_meal_types", []) or []),
-            servings=int(getattr(intake, "servings", 2) or 2),
-            days=getattr(intake, "days", None),
-            user_intent=getattr(intake, "user_intent", None),
-        )
-        output = await self.menu_planner_agent.create_menu_plan(agent_input)
-        logger.info(
-            "menu_planner_agent_node complete",
-            extra={
-                "request_id": state.get("request_id"),
-                "days": len(output.menu_plan.days) if output.menu_plan else 0,
-            },
-        )
-        return {"menu_plan": output.menu_plan}
+            agent_input = MenuPlannerAgentInput(
+                recipes=retrieved,
+                nutrition_notes=notes,
+                available_ingredients=list(
+                    getattr(intake, "available_ingredients", []) or []
+                ),
+                dietary_restrictions=list(
+                    getattr(intake, "dietary_restrictions", []) or []
+                ),
+                excluded_ingredients=list(
+                    getattr(intake, "excluded_ingredients", []) or []
+                ),
+                cuisine_preferences=list(
+                    getattr(intake, "cuisine_preferences", []) or []
+                ),
+                requested_meal_types=list(
+                    getattr(intake, "requested_meal_types", []) or []
+                ),
+                servings=int(getattr(intake, "servings", 2) or 2),
+                days=getattr(intake, "days", None),
+                user_intent=getattr(intake, "user_intent", None),
+            )
+            output = await self.menu_planner_agent.create_menu_plan(agent_input)
+            logger.info(
+                "menu_planner_agent_node complete",
+                extra={
+                    "request_id": state.get("request_id"),
+                    "days": len(output.menu_plan.days) if output.menu_plan else 0,
+                },
+            )
+            return {"menu_plan": output.menu_plan}
 
     async def _grocery_list_agent_node(self, state: State) -> dict[str, Any]:
         """Generate a grocery list from the menu plan and retrieved recipes."""
+        async with _timed_node("grocery_list_agent_node", state.get("request_id")):
+            return await self._grocery_list_agent_body(state)
+
+    async def _grocery_list_agent_body(self, state: State) -> dict[str, Any]:
         agent_menu_plan: Optional[AgentMenuPlan] = state.get("menu_plan")
         retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
         intake = state.get("ingredient_agent_output")
@@ -222,6 +284,10 @@ class RecipeAgentGraph:
 
     async def _final_response_node(self, state: State) -> dict[str, Any]:
         """Format retrieved recipes, nutrition, menu plan, and grocery list."""
+        async with _timed_node("final_response_node", state.get("request_id")):
+            return await self._final_response_body(state)
+
+    async def _final_response_body(self, state: State) -> dict[str, Any]:
         retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
         intake = state.get("ingredient_agent_output")
         notes: list[NutritionNote] = state.get("nutrition_notes") or []
