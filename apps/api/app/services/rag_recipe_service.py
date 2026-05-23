@@ -217,6 +217,12 @@ async def _embed_query(query: str) -> list[float]:
             "OPENAI_API_KEY is not set; rag_recipe_service cannot embed the query."
         )
 
+    from app.services.cache import get_embedding, set_embedding
+
+    cached = await get_embedding(query)
+    if cached is not None:
+        return cached
+
     try:
         from openai import AsyncOpenAI
     except ImportError as e:
@@ -232,7 +238,9 @@ async def _embed_query(query: str) -> list[float]:
         model=settings.EMBEDDING_MODEL,
         input=[query],
     )
-    return resp.data[0].embedding
+    embedding = resp.data[0].embedding
+    await set_embedding(query, embedding)
+    return embedding
 
 
 async def _fetch_candidates(

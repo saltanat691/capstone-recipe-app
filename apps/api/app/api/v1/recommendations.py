@@ -19,6 +19,7 @@ from app.models.api_key import ApiKey
 from app.observability import get_logger
 from app.observability.tracing import get_current_trace_id
 from app.schemas.recommendation import RecommendationRequest, RecommendationResponse
+from app.services.content_filter import ContentPolicyViolation, check as content_check
 from app.services.pii_scrubber import scrub, scrub_list
 
 logger = get_logger(__name__)
@@ -47,6 +48,15 @@ async def create_recommendations(
     # Scrub PII before it reaches any LLM or tracer.
     safe_message = scrub(request_data.message)
     safe_ingredients = scrub_list(request_data.available_ingredients)
+
+    # Content moderation — reject flagged input before touching any agent.
+    try:
+        await content_check(safe_message)
+    except ContentPolicyViolation as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request contains content that violates usage policy: {', '.join(exc.categories)}.",
+        ) from exc
 
     logger.info(
         "Received recommendation request",

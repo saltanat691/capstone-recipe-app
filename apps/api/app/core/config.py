@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     USDA_API_KEY: str = ""
     USDA_API_BASE_URL: str = "https://api.nal.usda.gov/fdc/v1"
 
+    # Redis — optional embedding cache (leave blank to disable)
+    REDIS_URL: str = ""
+
     # Auth
     REQUIRE_AUTH: bool = False
 
