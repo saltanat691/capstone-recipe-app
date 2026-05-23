@@ -195,7 +195,7 @@ class RecommendationResponse(BaseModel):
     # nutrition / menu_plan diagnostics). `exclude=True` keeps the attribute
     # accessible in Python but drops it from API serialization.
     metadata: Optional[dict[str, Any]] = Field(
-        default_factory=dict,
+        default_factory=lambda: {},
         description="Internal diagnostics; not serialized in API responses.",
         exclude=True,
     )

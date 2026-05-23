@@ -28,7 +28,7 @@ async def get_embedding(query: str) -> Optional[list[float]]:
     if not settings.REDIS_URL:
         return None
     try:
-        import redis.asyncio as aioredis
+        import redis.asyncio as aioredis  # type: ignore[import-untyped]
 
         client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         raw = await client.get(_embedding_key(query))
@@ -48,7 +48,7 @@ async def set_embedding(query: str, embedding: list[float]) -> None:
     if not settings.REDIS_URL:
         return
     try:
-        import redis.asyncio as aioredis
+        import redis.asyncio as aioredis  # type: ignore[import-untyped]
 
         client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         await client.setex(_embedding_key(query), _EMBEDDING_TTL, json.dumps(embedding))

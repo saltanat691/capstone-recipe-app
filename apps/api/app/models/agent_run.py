@@ -5,7 +5,7 @@ Agent run model for tracking AI agent executions.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin

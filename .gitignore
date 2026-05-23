@@ -24,7 +24,7 @@ next-env.d.ts
 next-env.d.ts
 
 # Dependencies
-package-lock.json
+# package-lock.json is committed so CI can use `npm ci`
 yarn.lock
 pnpm-lock.yaml
 

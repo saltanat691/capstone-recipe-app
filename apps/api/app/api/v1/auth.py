@@ -8,13 +8,12 @@ DELETE /users/me/data        — GDPR erasure of all data for the calling key's 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import generate_api_key, hash_key, require_api_key
-from app.core.config import settings
 from app.db.session import get_db
 from app.models.agent_run import AgentRun
 from app.models.api_key import ApiKey

@@ -241,11 +241,12 @@ class NutritionAgent:
                     responses = await asyncio.gather(*calls, return_exceptions=True)
 
             for ing, resp in zip(unique_ingredients, responses):
-                if isinstance(resp, Exception):
+                if isinstance(resp, BaseException):
                     continue
                 text = ""
-                if resp.content:
-                    text = getattr(resp.content[0], "text", "")
+                content = getattr(resp, "content", None)
+                if content:
+                    text = getattr(content[0], "text", "")
                 try:
                     data = json.loads(text)
                     if isinstance(data, dict) and data:
