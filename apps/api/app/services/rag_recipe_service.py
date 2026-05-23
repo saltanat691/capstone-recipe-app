@@ -208,6 +208,10 @@ async def retrieve_recipes(
 
 
 async def _embed_query(query: str) -> list[float]:
+    # TODO: optional Redis cache — key = SHA-256(query), TTL ~24 h; skip the
+    # OpenAI call on a hit and store the returned embedding on a miss.  Use a
+    # connection pool (e.g. redis.asyncio) configured via settings.REDIS_URL so
+    # the cache is a no-op when REDIS_URL is unset.
     if not settings.OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY is not set; rag_recipe_service cannot embed the query."

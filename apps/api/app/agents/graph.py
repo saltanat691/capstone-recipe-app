@@ -377,6 +377,11 @@ class RecipeAgentGraph:
 
         builder.add_edge(START, "ingredient_agent_node")
         builder.add_edge("ingredient_agent_node", "recipe_retrieval_node")
+        # TODO: parallelize independent agent steps — nutrition_agent_node and
+        # menu_planner_agent_node both depend only on recipe_retrieval_node and
+        # not on each other; replace the sequential edges with a fan-out from
+        # recipe_retrieval_node to both nodes and a fan-in join before
+        # grocery_list_agent_node using LangGraph's parallel branch API.
         builder.add_edge("recipe_retrieval_node", "nutrition_agent_node")
         builder.add_edge("nutrition_agent_node", "menu_planner_agent_node")
         builder.add_edge("menu_planner_agent_node", "grocery_list_agent_node")
