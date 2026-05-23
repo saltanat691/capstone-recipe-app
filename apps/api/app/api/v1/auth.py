@@ -96,7 +96,7 @@ async def create_api_key(
 
     logger.info(
         "api_key_created",
-        extra={"owner_id": body.owner_id, "name": body.name},
+        extra={"owner_id": body.owner_id, "key_name": body.name},
     )
     return CreateApiKeyResponse(
         key=plaintext,
