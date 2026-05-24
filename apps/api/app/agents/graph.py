@@ -1,9 +1,10 @@
 """
 LangGraph workflow.
 
-Linear pipeline:
+Pipeline with parallel fan-out after retrieval:
     START -> ingredient_agent_node -> recipe_retrieval_node
-          -> nutrition_agent_node -> menu_planner_agent_node
+          -> nutrition_agent_node   ─┐
+          -> menu_planner_agent_node ┘ (parallel)
           -> grocery_list_agent_node -> final_response_node -> END
 """
 
@@ -80,7 +81,7 @@ class RecipeAgentGraph:
     """
 
     def __init__(self) -> None:
-        logger.info("Initializing RecipeAgentGraph (linear)")
+        logger.info("Initializing RecipeAgentGraph (parallel fan-out after retrieval)")
         self.ingredient_agent = IngredientAgent()
         self.nutrition_agent = NutritionAgent()
         self.menu_planner_agent = MenuPlannerAgent()
@@ -366,7 +367,16 @@ class RecipeAgentGraph:
     # ---- Graph wiring --------------------------------------------------
 
     def build_graph(self) -> None:
-        """Compile the linear LangGraph workflow."""
+        """
+        Compile the LangGraph workflow.
+
+        After retrieval, nutrition_agent_node and menu_planner_agent_node run
+        in parallel (both depend only on retrieved_recipes, not on each other).
+        LangGraph's fan-in automatically waits for both before grocery_list_agent_node
+        starts.  Note: menu_planner receives nutrition_notes=[] during parallel
+        execution; nutrition context is soft — the planner still produces a valid
+        plan without it.
+        """
         from langgraph.graph import END, START, StateGraph
 
         builder = StateGraph(State)
@@ -379,19 +389,19 @@ class RecipeAgentGraph:
 
         builder.add_edge(START, "ingredient_agent_node")
         builder.add_edge("ingredient_agent_node", "recipe_retrieval_node")
-        # TODO: parallelize independent agent steps — nutrition_agent_node and
-        # menu_planner_agent_node both depend only on recipe_retrieval_node and
-        # not on each other; replace the sequential edges with a fan-out from
-        # recipe_retrieval_node to both nodes and a fan-in join before
-        # grocery_list_agent_node using LangGraph's parallel branch API.
+        # Fan-out: both nodes start as soon as retrieval completes
         builder.add_edge("recipe_retrieval_node", "nutrition_agent_node")
-        builder.add_edge("nutrition_agent_node", "menu_planner_agent_node")
+        builder.add_edge("recipe_retrieval_node", "menu_planner_agent_node")
+
+        # Fan-in: grocery_list waits for both to finish before starting
+        builder.add_edge("nutrition_agent_node", "grocery_list_agent_node")
         builder.add_edge("menu_planner_agent_node", "grocery_list_agent_node")
+
         builder.add_edge("grocery_list_agent_node", "final_response_node")
         builder.add_edge("final_response_node", END)
 
         self.graph = builder.compile()
-        logger.info("RecipeAgentGraph compiled")
+        logger.info("RecipeAgentGraph compiled (parallel fan-out after retrieval)")
 
     async def invoke(
         self,

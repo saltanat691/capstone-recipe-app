@@ -74,8 +74,8 @@ docker-compose up -d
 
 # 2. Setup and start backend
 cd ../../apps/api
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 alembic upgrade head
 python scripts/seed_recipes.py
@@ -144,7 +144,7 @@ The observability stack provides:
 
 **AI Pipeline**
 - **237-recipe dataset** spanning 14 cuisines (Central Asian, Italian, Mediterranean, Asian, Mexican, Indian, and more)
-- **Five-agent LangGraph pipeline**: `ingredient → RAG retrieval → nutrition → menu_planner → grocery_list → final_response` — each agent uses structured-output Pydantic schemas and deterministic fallbacks
+- **Five-agent LangGraph pipeline**: `ingredient → retrieval → [nutrition ‖ menu_planner] → grocery_list → final_response` — nutrition and menu_planner run in parallel after retrieval; each agent uses structured-output Pydantic schemas and deterministic fallbacks
 - **Semantic RAG retrieval**: OpenAI `text-embedding-3-small` + pgvector cosine similarity with HNSW index; Python re-ranking by cuisine match and ingredient overlap; hard dietary/exclusion filters
 - **Multi-day menu planning**: LLM-driven scheduling with deterministic validator (restriction conflicts, consecutive-day repeats, day-count mismatches); deterministic round-robin fallback when LLM unavailable
 - **Grocery list generation**: ingredient aggregation across the plan, deterministic categorization, plural/descriptor-aware `already_available` matching, LLM quantity estimates with graceful fallback
@@ -188,7 +188,8 @@ The observability stack provides:
 The Nutrition Agent enriches each retrieved recipe with an estimated per-serving nutrition profile and safety warnings. The current workflow is:
 
 ```
-START → ingredient_agent → recipe_retrieval → nutrition_agent → final_response → END
+START → ingredient_agent → recipe_retrieval → nutrition_agent ─┐
+                                              → menu_planner    ┘ → grocery_list → final_response → END
 ```
 
 ### What it produces
@@ -258,11 +259,11 @@ cd apps/api && source .venv/bin/activate && pytest -v
 
 ## Menu Planner Agent
 
-The Menu Planner Agent turns the retrieved recipes into an n-day menu plan. It runs after retrieval and nutrition:
+The Menu Planner Agent turns the retrieved recipes into an n-day menu plan. It runs in parallel with the Nutrition Agent after retrieval:
 
 ```
-START → ingredient_agent → recipe_retrieval → nutrition_agent
-      → menu_planner_agent → final_response → END
+START → ingredient_agent → recipe_retrieval → nutrition_agent   ─┐
+                                            → menu_planner_agent ┘ → grocery_list → final_response → END
 ```
 
 ### What it does
@@ -382,8 +383,8 @@ Expected: `null`.
 The Grocery List Agent runs after the Menu Planner and turns the planned recipes into a shopping list:
 
 ```
-START → ingredient_agent → recipe_retrieval → nutrition_agent
-      → menu_planner_agent → grocery_list_agent → final_response → END
+START → ingredient_agent → recipe_retrieval → nutrition_agent   ─┐
+                                            → menu_planner_agent ┘ → grocery_list_agent → final_response → END
 ```
 
 ### What it does
@@ -513,9 +514,9 @@ Expected: `grocery_list: null`, `warnings` contains `"Grocery list requested but
 
 ### Quick Start Guides
 
-- **[QUICKSTART.md](QUICKSTART.md)** — ⭐ minimal happy-path setup (5 minutes)
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** — deeper test runbook (endpoints, observability, common issues)
-- **[Setup Checklist](docs/SETUP_CHECKLIST.md)** — full step-by-step setup verification
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - ⭐ **Start here!** Quick testing commands for all services
+- **[Setup Checklist](docs/SETUP_CHECKLIST.md)** - Complete setup verification and troubleshooting
+- **[Consistency Check](CONSISTENCY_CHECK.md)** - Project configuration verification results
 
 ### Detailed Documentation
 

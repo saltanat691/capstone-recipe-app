@@ -8,19 +8,19 @@
 
 ## 1. Architecture Overview
 
-The system follows a **linear multi-agent pipeline** orchestrated by LangGraph:
+The system follows a **multi-agent pipeline with a parallel fan-out** orchestrated by LangGraph:
 
 ```
 User Request
-    → Ingredient Agent      (parse intent, extract preferences)
-    → RAG Retrieval Node    (embed query → pgvector search → re-rank)
-    → Nutrition Agent       (estimate macros, flag health warnings)
-    → Menu Planner Agent    (build day-by-day meal plan)
-    → Grocery List Agent    (aggregate ingredients into shopping list)
-    → Response Assembly     (merge all outputs into single response)
+    → Ingredient Agent               (parse intent, extract preferences)
+    → RAG Retrieval Node             (embed query → pgvector search → re-rank)
+    → Nutrition Agent   ─┐           (estimate macros, flag health warnings)   ┐ parallel
+    → Menu Planner Agent ┘ (join)    (build day-by-day meal plan)              ┘
+    → Grocery List Agent             (aggregate ingredients into shopping list)
+    → Response Assembly              (merge all outputs into single response)
 ```
 
-The pipeline is intentionally **linear rather than parallel or branching**. This was a deliberate trade-off chosen for predictability at the cost of latency.
+After retrieval, the Nutrition Agent and Menu Planner Agent run **in parallel** — both depend only on the retrieved recipes, not on each other. LangGraph's fan-in automatically waits for both before the Grocery List Agent starts. This reduces end-to-end latency from `nutrition_time + menu_time` to `max(nutrition_time, menu_time)`.
 
 ---
 
@@ -30,7 +30,7 @@ The pipeline is intentionally **linear rather than parallel or branching**. This
 
 **Choice:** Use LangGraph for agent workflow management.  
 **Rationale:** LangGraph provides built-in state management, retry logic, and observability hooks. Building a custom orchestrator would have duplicated these concerns and added maintenance burden.  
-**Trade-off:** LangGraph adds a dependency and introduces its own abstractions. For a simple linear chain, a plain `asyncio` sequence would have been lighter-weight. The trade-off pays off if the pipeline later needs conditional branching (e.g., skipping nutrition analysis for guest users) or parallel execution.
+**Trade-off:** LangGraph adds a dependency and introduces its own abstractions. The trade-off paid off: the parallel fan-out between the Nutrition Agent and Menu Planner Agent was implemented with a four-line graph wiring change, with no changes to the node logic. A plain `asyncio` sequence would have required manual task management and synchronization for the same result.
 
 ### Decision 2: pgvector over a dedicated vector database
 

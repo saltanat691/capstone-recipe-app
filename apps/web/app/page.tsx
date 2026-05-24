@@ -470,26 +470,69 @@ function ResultView({ result }: { result: RecommendationResponse }) {
           <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
             Recommended recipes ({result.recommendations.length})
           </h3>
-          <ul className="space-y-4">
+          <ul className="space-y-3">
             {result.recommendations.map((rec, i) => (
               <li
                 key={rec.id ?? i}
                 className="border-l-4 border-indigo-500 pl-4"
               >
-                <p className="font-medium text-gray-900 dark:text-white">
-                  {rec.name}
-                  {rec.cuisine && (
-                    <span className="ml-2 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      {rec.cuisine}
+                <details className="group">
+                  <summary className="flex items-center justify-between cursor-pointer list-none select-none py-1 marker:hidden">
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {rec.name}
+                      {rec.cuisine && (
+                        <span className="ml-2 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                          {rec.cuisine}
+                        </span>
+                      )}
                     </span>
-                  )}
-                </p>
-                {rec.ingredients && rec.ingredients.length > 0 && (
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    Ingredients: {rec.ingredients.slice(0, 8).join(", ")}
-                    {rec.ingredients.length > 8 ? "…" : ""}
-                  </p>
-                )}
+                    <span
+                      className="ml-3 text-xs text-indigo-600 dark:text-indigo-400 transition-transform duration-150 group-open:rotate-180"
+                      aria-hidden
+                    >
+                      ▼
+                    </span>
+                  </summary>
+
+                  <div className="mt-3 space-y-3 text-sm text-gray-700 dark:text-gray-300">
+                    {rec.description && (
+                      <p className="italic">{rec.description}</p>
+                    )}
+
+                    {rec.ingredients && rec.ingredients.length > 0 && (
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                          Ingredients
+                        </p>
+                        <ul className="list-disc list-inside space-y-0.5">
+                          {rec.ingredients.map((ing, k) => (
+                            <li key={k}>{ing}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {rec.instructions && rec.instructions.length > 0 && (
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                          Instructions
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1">
+                          {rec.instructions.map((step, k) => (
+                            <li key={k}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
+                    {(!rec.ingredients || rec.ingredients.length === 0) &&
+                      (!rec.instructions || rec.instructions.length === 0) && (
+                        <p className="text-xs italic text-gray-500 dark:text-gray-400">
+                          No detailed ingredients or instructions returned for this recipe.
+                        </p>
+                      )}
+                  </div>
+                </details>
               </li>
             ))}
           </ul>
