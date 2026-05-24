@@ -54,6 +54,8 @@ class RetrievedRecipe(BaseModel):
     cuisine: Optional[str] = None
     ingredients: list[str] = Field(default_factory=list)
     instructions: Optional[list[str]] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
     score: float
     match_reason: str
 

@@ -40,3 +40,7 @@ class NutritionNote(BaseModel):
     health_notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     confidence: Literal["low", "medium", "high"] = "low"
+    usda_grounded: bool = Field(
+        default=False,
+        description="True when authoritative USDA reference data was injected into the estimate.",
+    )

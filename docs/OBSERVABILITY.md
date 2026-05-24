@@ -125,7 +125,7 @@ Grafana provides dashboards and visualization for all observability data.
 
 **Location**: `infra/grafana/`
 
-**Access**: http://localhost:3000 (default credentials in `.env`)
+**Access**: http://localhost:3001 (credentials: admin / admin)
 
 **Dashboard Categories**:
 1. **System Overview**: High-level system health
@@ -203,62 +203,63 @@ async function fetchRecipes() {
 
 ### Structured Logging
 
+The backend uses `python-json-logger` with trace context correlation. Every log line is JSON and includes `trace_id` and `span_id` automatically.
+
 **Python**:
 
 ```python
-import structlog
+from app.observability import get_logger
 
-logger = structlog.get_logger()
+logger = get_logger(__name__)
 
 logger.info(
-    "recipe_created",
-    recipe_id=recipe_id,
-    user_id=user_id,
-    duration_ms=duration
+    "recipe_retrieved",
+    extra={
+        "recipe_id": recipe_id,
+        "duration_ms": duration,
+        "score": score,
+    }
 )
 ```
 
-**TypeScript**:
-
-```typescript
-import pino from 'pino';
-
-const logger = pino();
-
-logger.info({
-  action: 'recipe_created',
-  recipeId: recipe.id,
-  userId: user.id,
-  durationMs: duration
-});
+Log lines look like:
+```json
+{"timestamp": "2026-05-24T10:00:00Z", "level": "INFO", "message": "recipe_retrieved",
+ "recipe_id": 42, "duration_ms": 120, "trace_id": "abc123", "span_id": "def456"}
 ```
 
-### Adding Metrics
+### Metrics Instruments
 
-**Python**:
+All instruments live in `app/observability/metrics.py` and are exported every 30 seconds over OTLP HTTP.
+
+| Instrument | Type | Description |
+|---|---|---|
+| `recipe_requests_total` | Counter | Total recommendation requests (`status` attribute) |
+| `recipe_recommendations_returned` | Histogram | Recipe count per request |
+| `recipe_request_latency_ms` | Histogram | End-to-end latency in ms |
+| `embedding_cache_hits_total` | Counter | Redis embedding cache hits |
+| `embedding_cache_misses_total` | Counter | Redis embedding cache misses |
+| `content_filter_rejections_total` | Counter | Requests rejected by content moderation |
+| `cuisine_diversity_warnings_total` | Counter | Cuisine-skew warnings (`cuisine` attribute) |
+| `process_memory_rss_mb` | Observable Gauge | Process RSS memory (MB) via psutil |
+| `process_cpu_percent` | Observable Gauge | Process CPU usage (%) via psutil |
+
+Use the helper functions — never call instruments directly:
 
 ```python
-from opentelemetry import metrics
-
-meter = metrics.get_meter(__name__)
-
-# Counter
-recipe_counter = meter.create_counter(
-    "recipes_created",
-    description="Number of recipes created"
+from app.observability.metrics import (
+    record_request, record_recommendations, record_latency,
+    record_cache_hit, record_cache_miss,
+    record_filter_rejection, record_diversity_warning,
 )
 
-recipe_counter.add(1, {"user_type": "premium"})
-
-# Histogram
-request_duration = meter.create_histogram(
-    "request_duration",
-    description="Request duration in ms"
-)
-
-request_duration.record(duration_ms, {"endpoint": "/recipes"})
+record_request(status="success")
+record_recommendations(count=5)
+record_latency(ms=342.1)
+record_diversity_warning(dominant_cuisine="Italian")
 ```
 
+The process gauges (`process_memory_rss_mb`, `process_cpu_percent`) are polled automatically — no manual recording needed.
 ## Common Queries
 
 ### LogQL (Loki)
@@ -323,7 +324,7 @@ span.recipe.id="abc123"
 
 ### Creating Custom Dashboards
 
-1. Access Grafana at http://localhost:3000
+1. Access Grafana at http://localhost:3001
 2. Click "+" → "Dashboard"
 3. Add panels with desired visualizations
 4. Save dashboard with descriptive name

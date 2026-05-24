@@ -1,6 +1,6 @@
 {
-  "version": "1.0",
-  "description": "Golden QA set for RAG retrieval quality evaluation. Each entry pairs a natural-language query with the recipe names that should appear in the top-K results. Queries are designed to test cuisine matching, ingredient overlap, dietary filtering, meal-type awareness, and semantic (non-keyword) understanding.",
+  "version": "1.1",
+  "description": "Golden QA set for RAG retrieval quality evaluation. Each entry pairs a natural-language query with the recipe names OR keywords that should appear in the top-K results. 'relevant_keywords' supports larger datasets with variants: a retrieved recipe is considered relevant if its name matches an expected_recipes entry OR contains any relevant_keyword (case-insensitive substring match).",
   "k": 5,
   "thresholds": {
     "precision_at_k": 0.40,
@@ -13,6 +13,7 @@
       "description": "Cuisine + ingredient signal — Central Asian plov",
       "query": "Central Asian rice pilaf with meat for dinner",
       "expected_recipes": ["Chicken Plov", "Beef Plov"],
+      "relevant_keywords": ["plov", "pilaf"],
       "filters": {}
     },
     {
@@ -20,6 +21,7 @@
       "description": "Meal-type + category — lunch soups",
       "query": "warm soup for a weekday lunch",
       "expected_recipes": ["Lentil Soup", "Chicken Noodle Soup"],
+      "relevant_keywords": ["soup", "stew", "broth", "chowder"],
       "filters": {}
     },
     {
@@ -27,6 +29,7 @@
       "description": "Meal-type — breakfast eggs",
       "query": "quick protein-rich breakfast with eggs",
       "expected_recipes": ["Egg Breakfast Plate", "Shakshuka"],
+      "relevant_keywords": ["egg", "shakshuka", "omelette", "omelet", "frittata", "breakfast"],
       "filters": {}
     },
     {
@@ -34,6 +37,7 @@
       "description": "Ingredient signal — noodle dishes",
       "query": "dinner with noodles or pasta",
       "expected_recipes": ["Lagman-style Noodles", "Spaghetti Bolognese"],
+      "relevant_keywords": ["noodle", "pasta", "spaghetti", "lagman", "linguine", "fettuccine", "penne", "alfredo", "naryn"],
       "filters": {}
     },
     {
@@ -41,6 +45,7 @@
       "description": "Cuisine — Central Asian traditional dishes",
       "query": "traditional Central Asian meat dish",
       "expected_recipes": ["Beshbarmak-style Chicken", "Chicken Plov", "Beef Plov"],
+      "relevant_keywords": ["plov", "beshbarmak", "lagman", "manty", "samsa", "central asian", "kazakh", "uzbek"],
       "filters": {}
     },
     {
@@ -48,6 +53,7 @@
       "description": "Cuisine + dietary — Mediterranean vegetarian",
       "query": "Mediterranean vegetarian dinner",
       "expected_recipes": ["Vegetable Stew", "Lentil Soup", "Greek Salad"],
+      "relevant_keywords": ["mediterranean", "greek", "lentil", "vegetable stew", "ratatouille", "falafel", "hummus", "tabbouleh"],
       "filters": {}
     },
     {
@@ -55,6 +61,7 @@
       "description": "Semantic — Asian stir fry",
       "query": "quick Asian-style stir fry for dinner",
       "expected_recipes": ["Chicken Stir Fry", "Salmon Teriyaki"],
+      "relevant_keywords": ["stir fry", "stir-fry", "teriyaki", "wok", "asian", "fried rice"],
       "filters": {}
     },
     {
@@ -62,6 +69,7 @@
       "description": "Specific recipe — Greek salad",
       "query": "fresh Greek salad with olives and feta",
       "expected_recipes": ["Greek Salad"],
+      "relevant_keywords": ["greek salad", "greek", "feta", "salad"],
       "filters": {}
     },
     {
@@ -69,6 +77,7 @@
       "description": "Cuisine — Italian dinner",
       "query": "classic Italian dinner",
       "expected_recipes": ["Spaghetti Bolognese", "Mushroom Risotto"],
+      "relevant_keywords": ["spaghetti", "pasta", "risotto", "italian", "bolognese", "carbonara", "lasagna", "alfredo", "pomodoro", "penne", "fettuccine"],
       "filters": {}
     },
     {
@@ -76,6 +85,7 @@
       "description": "Cuisine — spicy curry",
       "query": "spicy curry dinner",
       "expected_recipes": ["Vegetable Curry", "Thai Green Curry"],
+      "relevant_keywords": ["curry", "masala", "tikka", "korma", "dal"],
       "filters": {}
     },
     {
@@ -83,6 +93,7 @@
       "description": "Specific recipe — tacos",
       "query": "Mexican chicken tacos for lunch",
       "expected_recipes": ["Chicken Tacos"],
+      "relevant_keywords": ["taco", "burrito", "quesadilla", "mexican", "enchilada"],
       "filters": {}
     },
     {
@@ -90,6 +101,7 @@
       "description": "Health-focused — grain bowl",
       "query": "healthy grain bowl with vegetables",
       "expected_recipes": ["Quinoa Buddha Bowl", "Greek Salad"],
+      "relevant_keywords": ["quinoa", "buddha bowl", "grain", "bowl", "salad"],
       "filters": {}
     },
     {
@@ -97,6 +109,7 @@
       "description": "Specific recipe — teriyaki",
       "query": "Japanese teriyaki with salmon",
       "expected_recipes": ["Salmon Teriyaki"],
+      "relevant_keywords": ["teriyaki", "salmon", "japanese", "sushi", "miso"],
       "filters": {}
     },
     {
@@ -104,6 +117,7 @@
       "description": "Specific recipe — mushroom risotto",
       "query": "creamy mushroom risotto Italian",
       "expected_recipes": ["Mushroom Risotto"],
+      "relevant_keywords": ["risotto", "mushroom risotto"],
       "filters": {}
     },
     {
@@ -111,6 +125,7 @@
       "description": "Specific recipe + cuisine — shakshuka",
       "query": "Middle Eastern eggs poached in tomato sauce",
       "expected_recipes": ["Shakshuka"],
+      "relevant_keywords": ["shakshuka", "middle eastern", "shakshouka"],
       "filters": {}
     },
     {
@@ -118,6 +133,7 @@
       "description": "Ingredient — seafood dinner",
       "query": "dinner with fish or seafood",
       "expected_recipes": ["Salmon Teriyaki", "Fish with Vegetables"],
+      "relevant_keywords": ["fish", "salmon", "seafood", "shrimp", "tuna", "cod", "tilapia", "prawn"],
       "filters": {}
     },
     {
@@ -130,6 +146,7 @@
         "Beshbarmak-style Chicken",
         "Buckwheat with Chicken"
       ],
+      "relevant_keywords": ["chicken", "poultry"],
       "filters": {}
     },
     {
@@ -137,6 +154,7 @@
       "description": "Cuisine + ingredient — buckwheat Eastern European",
       "query": "Eastern European buckwheat dinner",
       "expected_recipes": ["Buckwheat with Chicken"],
+      "relevant_keywords": ["buckwheat", "eastern european", "kasha"],
       "filters": {}
     },
     {
@@ -144,6 +162,7 @@
       "description": "Dietary — vegan or vegetarian dinner",
       "query": "vegan or vegetarian dinner options",
       "expected_recipes": ["Vegetable Stew", "Vegetable Curry", "Quinoa Buddha Bowl", "Greek Salad"],
+      "relevant_keywords": ["vegetable", "vegan", "vegetarian", "tofu", "lentil", "quinoa", "salad", "plant"],
       "filters": {}
     },
     {
@@ -157,6 +176,7 @@
         "Vegetable Curry",
         "Thai Green Curry"
       ],
+      "relevant_keywords": ["rice", "plov", "pilaf", "fried rice", "risotto", "paella"],
       "filters": {}
     }
   ]

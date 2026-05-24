@@ -60,33 +60,30 @@ Ensure you have the following installed:
 ```
 recipe-ai-system/
 ├── apps/
-│   ├── web/              # Frontend application
-│   │   ├── src/
-│   │   │   ├── app/      # Next.js app directory
-│   │   │   ├── components/
-│   │   │   ├── lib/
-│   │   │   └── types/
-│   │   ├── public/
+│   ├── web/              # Next.js 15 frontend
+│   │   ├── app/          # Next.js app directory (page.tsx, layout.tsx)
+│   │   │   └── lib/      # auth.ts, api.ts helpers
 │   │   └── package.json
 │   │
-│   └── api/              # Backend application
-│       ├── src/
-│       │   ├── routes/   # API endpoints
-│       │   ├── services/ # Business logic
-│       │   ├── agents/   # LangGraph agents
-│       │   ├── models/   # Database models
-│       │   └── utils/
-│       ├── tests/
+│   └── api/              # FastAPI backend
+│       ├── app/
+│       │   ├── agents/   # LangGraph agents (5 agents + graph.py + state.py)
+│       │   ├── api/v1/   # Route handlers (recommendations, health, auth)
+│       │   ├── core/     # Config, security
+│       │   ├── db/       # Session, base
+│       │   ├── models/   # SQLAlchemy models (Recipe, User, AgentRun…)
+│       │   ├── observability/ # OTel setup (metrics, tracing, logging)
+│       │   ├── schemas/  # Pydantic request/response schemas
+│       │   └── services/ # RAG retrieval, recipe text, content filter, PII
+│       ├── alembic/      # Database migrations
+│       ├── data/         # recipes_seed.json, rag_golden_qa.json
+│       ├── scripts/      # seed_recipes.py, embed_recipes.py, evaluate_rag.py
+│       ├── tests/        # pytest test suite
 │       └── requirements.txt
 │
-├── packages/
-│   └── shared/           # Shared code between apps
-│       ├── types/        # TypeScript types
-│       └── constants/    # Shared constants
-│
-├── infra/                # Infrastructure configurations
+├── infra/                # Docker Compose, Grafana, Tempo, Loki, Promtail configs
 ├── docs/                 # Documentation
-└── ...
+└── .env                  # Root env file (loaded by both api and infra)
 ```
 
 ## Development Workflow
@@ -112,15 +109,16 @@ The development server will start at `http://localhost:3000`.
 ```bash
 cd apps/api
 source venv/bin/activate
-uvicorn src.main:app --reload --port 8000
+uvicorn src.main:app --reload --port 4000
 ```
 
-The API will be available at `http://localhost:8000`.
-API documentation at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:4000`.
+API documentation at `http://localhost:4000/docs`.
 
 **Key Commands**:
-- `uvicorn src.main:app --reload` - Start dev server with hot reload
-- `pytest` - Run tests
+- `uvicorn app.main:app --reload --port 4000` - Start dev server with hot reload
+- `pytest` - Run all tests
+- `pytest -m "not integration"` - Skip tests that need OpenAI/DB
 - `black .` - Format code
 - `ruff check .` - Lint code
 - `mypy .` - Type checking
@@ -165,17 +163,24 @@ npm run test:e2e      # End-to-end tests (when implemented)
 
 ```bash
 cd apps/api
-pytest                    # Run all tests
-pytest tests/unit/        # Unit tests only
-pytest tests/integration/ # Integration tests
-pytest --cov              # With coverage report
+pytest                              # Run all tests
+pytest -m "not integration"         # Unit/mocked tests only (no OpenAI/DB needed)
+pytest -m integration               # Integration tests (require OPENAI_API_KEY + DB)
+pytest tests/test_adversarial.py    # Adversarial & safety tests (32 non-integration)
+pytest tests/test_rag_evaluation.py # RAG retrieval quality tests (43 integration tests)
+pytest --cov                        # With coverage report
 ```
 
+**Test files**:
+- `test_recommendations_endpoint.py` — API endpoint tests (mocked)
+- `test_adversarial.py` — schema validation, PII scrubbing, prompt injection, harmful content
+- `test_rag_evaluation.py` — RAG Precision@K, Recall@K, MRR against golden QA set (integration)
+- `test_rag_recipe_service.py` — retrieval service unit tests
+- `test_nutrition_agent.py`, `test_menu_planner_agent.py`, `test_grocery_list_agent.py` — agent unit tests
+
 **Testing Stack**:
-- pytest for test framework
-- pytest-asyncio for async tests
+- pytest + pytest-asyncio for async tests
 - httpx for API testing
-- factory_boy for test fixtures
 
 ## Database Management
 
@@ -199,11 +204,23 @@ alembic downgrade -1
 alembic current
 ```
 
-### Database Seeding
+### Database Seeding and Embeddings
 
 ```bash
 cd apps/api
-python scripts/seed_database.py
+
+# 1. Seed recipe data (237 recipes from data/recipes_seed.json)
+python scripts/seed_recipes.py
+
+# 2. Generate OpenAI embeddings (requires OPENAI_API_KEY)
+python scripts/embed_recipes.py
+python scripts/embed_recipes.py --force        # Re-embed all
+python scripts/embed_recipes.py --batch-size 16 --sleep 2.0  # Slower for free-tier
+
+# 3. Evaluate RAG retrieval quality
+python scripts/evaluate_rag.py                 # Prints Precision@K, Recall@K, MRR
+python scripts/evaluate_rag.py --output results/rag_eval.json
+python scripts/evaluate_rag.py --fail-below-threshold  # Exit 1 if metrics fail
 ```
 
 ## Working with AI Agents
@@ -288,8 +305,8 @@ Closes #123
 # Frontend (port 3000)
 lsof -ti:3000 | xargs kill -9
 
-# Backend (port 8000)
-lsof -ti:8000 | xargs kill -9
+# Backend (port 4000)
+lsof -ti:4000 | xargs kill -9
 ```
 
 ### Database Connection Issues
