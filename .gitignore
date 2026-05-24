@@ -51,6 +51,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Do not ignore the frontend source lib directory
+!apps/web/app/lib/
 parts/
 sdist/
 var/
