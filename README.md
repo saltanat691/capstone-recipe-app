@@ -9,7 +9,7 @@ This is a monorepo project using a microservices architecture with AI orchestrat
 ### Tech Stack
 
 #### Frontend
-- **Next.js 14+** - React framework with App Router
+- **Next.js 15** - React framework with App Router
 - **TypeScript** - Type-safe development
 - **Tailwind CSS** - Utility-first styling
 
@@ -29,37 +29,27 @@ This is a monorepo project using a microservices architecture with AI orchestrat
 ## Project Structure
 
 ```
-recipe-ai-system/
+capstone-recipe-app/
 ├── apps/
-│   ├── api/                # FastAPI backend (Python 3.11+)
-│   │   ├── app/
-│   │   │   ├── agents/         # LangGraph workflow + agent implementations
-│   │   │   ├── api/            # FastAPI routers (v1 + health)
-│   │   │   ├── core/           # Settings, auth, rate-limit
-│   │   │   ├── db/             # SQLAlchemy async session + base
-│   │   │   ├── middleware/     # Request ID + size-limit middlewares
-│   │   │   ├── models/         # SQLAlchemy ORM models
-│   │   │   ├── observability/  # OTel tracing/metrics + structured logging
-│   │   │   ├── schemas/        # Pydantic request/response shapes
-│   │   │   └── services/       # RAG, cache, content filter, diversity, etc.
-│   │   ├── alembic/        # DB migrations (001 initial → 004 feedback)
-│   │   ├── scripts/        # seed_recipes / embed_recipes / evaluate_rag / verify_db
-│   │   ├── tests/          # Pytest suite (unit + @integration)
-│   │   ├── Dockerfile
-│   │   └── requirements.txt
-│   └── web/                # Next.js 16 frontend (TypeScript, Tailwind 4)
-│       ├── app/            # App-router pages + API client (`app/lib/api.ts`)
-│       └── Dockerfile
-├── infra/
-│   ├── docker/             # docker-compose.yml (infra + `apps` profile)
-│   ├── grafana/            # Grafana dashboards + provisioning
-│   ├── tempo/              # Tempo tracing configuration
-│   ├── loki/               # Loki log storage configuration
-│   └── promtail/           # Promtail log shipper config (Docker SD)
-├── docs/                   # Architecture, dev guide, observability, setup checklist
-├── .github/workflows/      # GitHub Actions CI (backend + frontend jobs)
-├── .env.example            # Monorepo env template
-└── README.md               # This file
+│   ├── web/              # Next.js 15 frontend (auth gate, guest mode, recommendation form)
+│   └── api/              # FastAPI backend
+│       ├── app/
+│       │   ├── agents/   # LangGraph agents (5 agents + graph.py + state.py)
+│       │   ├── api/v1/   # Route handlers (recommendations, health, auth, feedback)
+│       │   ├── core/     # Config, security, rate limiting
+│       │   ├── db/       # Session, base
+│       │   ├── models/   # SQLAlchemy models (Recipe, User, AgentRun, Feedback…)
+│       │   ├── observability/ # OTel setup (metrics, tracing, logging)
+│       │   ├── schemas/  # Pydantic request/response schemas
+│       │   └── services/ # RAG retrieval, content filter, PII scrubber, cache, diversity
+│       ├── alembic/      # 4 database migrations
+│       ├── data/         # recipes_seed.json (237 recipes), rag_golden_qa.json
+│       ├── scripts/      # seed_recipes.py, embed_recipes.py, evaluate_rag.py
+│       └── tests/        # pytest suite (adversarial, RAG eval, agent unit tests)
+├── infra/                # Docker Compose, Grafana, Tempo, Loki, Promtail configs
+├── docs/                 # Project documentation
+├── .env.example          # Example environment variables
+└── README.md             # This file
 ```
 
 ## Getting Started
@@ -75,13 +65,10 @@ recipe-ai-system/
 
 For a comprehensive step-by-step setup guide with verification commands, see **[Setup Checklist](docs/SETUP_CHECKLIST.md)**.
 
-**Quick start commands** (everything local, infra in Docker):
+**Quick start commands:**
 
 ```bash
-# 0. (once) Copy the root env template and fill in real values
-cp .env.example .env
-
-# 1. Start infrastructure (Postgres + Grafana + Tempo + Loki)
+# 1. Start infrastructure
 cd infra/docker
 docker-compose up -d
 
@@ -92,25 +79,16 @@ source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 alembic upgrade head
 python scripts/seed_recipes.py
-python scripts/embed_recipes.py   # one-time: populates pgvector embeddings
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 
 # 3. Setup and start frontend (in new terminal)
 cd apps/web
-cp .env.local.example .env.local      # exposes NEXT_PUBLIC_API_URL
 npm install
 npm run dev
 ```
 
-**Or run the full stack in Docker** (API + web + Promtail join the infra services):
-
-```bash
-cd infra/docker
-docker-compose --profile apps up -d --build
-```
-
 **Access points:**
-- **API**: http://localhost:4000 (docs at http://localhost:4000/docs, readiness at /readiness)
+- **API**: http://localhost:4000 (docs at http://localhost:4000/docs)
 - **Frontend**: http://localhost:3000
 - **Grafana**: http://localhost:3001 (admin/admin)
 - **PostgreSQL**: localhost:5432 (recipe_user/recipe_password)
@@ -125,7 +103,7 @@ curl http://localhost:4000/health
 
 # Check database
 docker-compose exec postgres psql -U recipe_user -d recipe_ai -c 'SELECT COUNT(*) FROM recipes;'
-# Should return: 20
+# Should return: 237
 
 # Test recommendations
 curl -X POST http://localhost:4000/api/v1/recommendations \
@@ -152,76 +130,58 @@ This project uses a monorepo structure to maintain:
 - Consistent tooling and configuration
 - Simplified dependency management
 
-### Local dev quick-reference
-
-```bash
-# Run unit tests (no LLM / no DB)
-cd apps/api && source .venv/bin/activate && pytest -m "not integration" -v
-
-# Full suite (loads .env, runs integration tests if OPENAI_API_KEY is set)
-pytest -v
-
-# Static checks
-ruff check app && mypy app
-
-# Frontend
-cd apps/web && npm run lint && npm run type-check && npm run build
-```
-
-### CI
-
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push / PR to `main`:
-- **backend**: `ruff` + `mypy` + `pytest -m "not integration"` (no API keys required — integration tests auto-skip when `OPENAI_API_KEY` is unset)
-- **frontend**: `npm ci` + `npm run lint` + `npm run type-check` + `npm run build`
-
 ### Observability Stack
 
 The observability stack provides:
-- **Distributed Tracing**: OpenTelemetry → Tempo (OTLP HTTP, port 4318). Spans cover every request and every LangGraph node.
-- **Metrics**: Process-level (memory/CPU via `psutil`) + counters (`cache_hit`, `cache_miss`, etc.) exported via OTel to the same collector.
-- **Logs**: Structured JSON to stdout; Promtail (Docker SD) scrapes container stdout and forwards to Loki when the `apps` profile is up.
-- **Event labels for fast LogQL filtering**: `event=node_complete` (per-node latency), `event=retrieval_empty`, `event=llm_fallback`, `event=api_error`.
-- **LLM Tracing**: LangSmith for prompt/response inspection.
+- **Distributed Tracing**: Track requests across services with Tempo
+- **Log Aggregation**: Centralized logging with Loki
+- **Metrics & Dashboards**: Visualization with Grafana
+- **LLM Tracing**: Debug and optimize AI agents with LangSmith
 
 ## Features
 
 ### Current Features ✅
 
-- **Recipe Database**: 20 seed recipes with Central Asian and international cuisines (PostgreSQL + `pgvector` HNSW index)
-- **AI-powered recommendations**: LangGraph workflow with 5 wired agents — `ingredient → retrieval → nutrition → menu_planner → grocery_list → final_response` — each with structured-output Pydantic schemas and deterministic fallbacks
-- **RAG retrieval**: OpenAI embeddings + pgvector cosine similarity (HNSW); deterministic re-ranking on cuisine/ingredient overlap; safety filters for excluded ingredients and dietary restrictions; optional Redis embedding cache (`REDIS_URL`)
-- **Menu planning**: n-day plans with LLM-driven scheduling, requested meal types (breakfast/lunch/dinner/full_day), and deterministic validation (restriction conflicts, consecutive-day repeats, day-count mismatches)
-- **Grocery lists**: ingredient aggregation across the plan, deterministic categorization, plural/descriptor-aware matching for `already_available`, optional LLM quantity estimation with practical units (kg/g/pcs/bunch/tbsp/tsp/liters)
-- **Nutrition estimates**: per-recipe macros + confidence + deterministic safety warnings for the user's stated restrictions
-- **User feedback**: `POST /api/v1/feedback` to rate a prior response 1–5 stars by `trace_id`
-- **Optional API-key auth**: `POST /api/v1/auth/api-keys` issues keys; enforcement gated by `REQUIRE_AUTH=true`; consumers send `X-API-Key`
-- **Content safety**: OpenAI Moderation pre-check + PII scrubbing on incoming text
-- **Result diversification**: post-retrieval reshuffle to avoid same-cuisine monocultures
-- **Production safety**: per-IP rate limit on `/api/v1/recommendations` (`RATE_LIMIT_PER_MINUTE`, default 10/min), request size cap (`MAX_REQUEST_BYTES`, default 1 MB), explicit LLM timeouts (`LLM_TIMEOUT_SECONDS`, default 30s)
-- **Health & readiness**: `GET /health` (liveness), `GET /readiness` (DB ping)
-- **Data retention**: background loop in `app/main.py` purges expired `agent_runs` / `user_preferences` (`DATA_RETENTION_DAYS`, default 90)
-- **API Documentation**: Interactive Swagger UI and ReDoc at `/docs` and `/redoc`
-- **Observability Stack**:
-  - Distributed tracing with OpenTelemetry → Tempo (OTLP HTTP, port 4318)
-  - Metrics (process memory/CPU + counters) via OTel → Tempo collector
-  - Structured JSON logs shipped to Loki via Promtail (container scraping)
-  - Per-node latency events (`event=node_complete`) and structured signals for `retrieval_empty`, `llm_fallback`, `api_error`
-  - Grafana at `http://localhost:3001` (admin/admin)
-- **Database**: PostgreSQL 16 + `pgvector`; 4 Alembic migrations (initial, HNSW index, auth + retention, feedback)
-- **Containerization**: `apps/api/Dockerfile` (multi-stage Python 3.11-slim) and `apps/web/Dockerfile` (Node 20-alpine); `docker-compose --profile apps up` brings the full stack
-- **CI**: GitHub Actions (`.github/workflows/ci.yml`) — backend (ruff + mypy + pytest excluding integration) and frontend (lint + type-check + build) jobs in parallel, no API keys required
-- **Frontend**: Next.js 16 + Tailwind 4 at `apps/web/`; the recommendation form is wired to `POST /api/v1/recommendations` and renders all six response fields with loading/error states
+**AI Pipeline**
+- **237-recipe dataset** spanning 14 cuisines (Central Asian, Italian, Mediterranean, Asian, Mexican, Indian, and more)
+- **Five-agent LangGraph pipeline**: `ingredient → RAG retrieval → nutrition → menu_planner → grocery_list → final_response` — each agent uses structured-output Pydantic schemas and deterministic fallbacks
+- **Semantic RAG retrieval**: OpenAI `text-embedding-3-small` + pgvector cosine similarity with HNSW index; Python re-ranking by cuisine match and ingredient overlap; hard dietary/exclusion filters
+- **Multi-day menu planning**: LLM-driven scheduling with deterministic validator (restriction conflicts, consecutive-day repeats, day-count mismatches); deterministic round-robin fallback when LLM unavailable
+- **Grocery list generation**: ingredient aggregation across the plan, deterministic categorization, plural/descriptor-aware `already_available` matching, LLM quantity estimates with graceful fallback
+- **Nutrition estimates**: per-recipe macros + confidence + deterministic safety warnings; USDA FoodData Central grounding via MCP server in the Nutrition Agent
+- **Source attribution**: `source` and `source_url` fields surfaced on every `RecipeRecommendation`
+- **Cuisine diversity check**: warning emitted when results skew ≥ 60% toward a single cuisine
 
-### In Progress 🚧
+**Security & Safety**
+- **API key authentication**: `rcp_<token>` keys stored as SHA-256 hashes; optional guest mode; key expiry support
+- **Content filtering**: OpenAI Moderation API integration with graceful degradation; blocks harmful content with HTTP 400
+- **PII scrubbing**: regex scrubber strips emails, phone numbers, SSNs, and card numbers from all inputs before LLM/tracer
+- **Rate limiting**: 10 req/min per key via SlowAPI (configurable via `RATE_LIMIT_PER_MINUTE`)
+- **Prompt injection robustness**: 8 adversarial injection payloads tested (56 adversarial tests total)
 
-- USDA FoodData Central grounding for the Nutrition Agent via a stdio-based MCP server (Python client wiring is in `app/agents/nutrition_agent.py`; the `mcp_server.py` server script itself is pending)
-- Production deploy targets (the CI builds images but doesn't push or deploy yet)
+**Observability**
+- **OpenTelemetry**: distributed traces → Grafana Tempo; 9 metric instruments (counters, histograms, and psutil-backed CPU/memory gauges) → Grafana; structured JSON logs with `trace_id`/`span_id` → Loki
+- **LangSmith**: per-call LLM tracing with token usage and cost tracking; honours per-key `tracing_consent`
+- **`AgentRun` model**: stores `total_tokens`, `prompt_tokens`, `completion_tokens`, `estimated_cost` per request
+- **Feedback endpoint**: `POST /api/v1/feedback` — 1–5 star ratings with optional comment, correlated by `trace_id`
+
+**Compliance & Quality**
+- **Data retention**: `expires_at` on `AgentRun` and `UserPreference`; hourly background cleanup loop; 90-day default (`DATA_RETENTION_DAYS`)
+- **Consent management**: `tracing_consent` flag on each API key; `DELETE /users/me/data` GDPR erasure endpoint
+- **RAG quality evaluation**: 20-query golden QA set with Precision@5, Recall@5, MRR; evaluated thresholds P@5 ≥ 0.40, R@5 ≥ 0.55, MRR ≥ 0.55
+- **Database migrations**: 4 Alembic migrations (initial schema → HNSW index → auth/retention → feedback table)
+- **Redis embedding cache**: 24-hour TTL; cache hit/miss OTel counters; graceful degradation when Redis unavailable
+
+**Frontend**
+- **Next.js 15 web app**: recommendation form with API-key auth gate and guest mode; Tailwind CSS styling
 
 ### Planned 📋
 
-- User preferences UI on the frontend
-- Recipe CRUD endpoints
-- Grafana provisioned dashboards keyed on the new event labels
+- User self-registration (currently API keys are issued manually)
+- Streaming responses (full pipeline output today; partial streaming deferred)
+- Personalized re-ranking using feedback signals
+- Mobile application (REST API is already mobile-ready)
+- Grocery integration with retail APIs (Instacart, Kroger)
 
 ## Nutrition Agent
 
@@ -553,9 +513,9 @@ Expected: `grocery_list: null`, `warnings` contains `"Grocery list requested but
 
 ### Quick Start Guides
 
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - ⭐ **Start here!** Quick testing commands for all services
-- **[Setup Checklist](docs/SETUP_CHECKLIST.md)** - Complete setup verification and troubleshooting
-- **[Consistency Check](CONSISTENCY_CHECK.md)** - Project configuration verification results
+- **[QUICKSTART.md](QUICKSTART.md)** — ⭐ minimal happy-path setup (5 minutes)
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** — deeper test runbook (endpoints, observability, common issues)
+- **[Setup Checklist](docs/SETUP_CHECKLIST.md)** — full step-by-step setup verification
 
 ### Detailed Documentation
 

@@ -40,7 +40,7 @@ cd infra/docker && docker-compose up -d
 
 # 2. Start API (in new terminal)
 cd apps/api
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 
 # 3. Start Frontend (in new terminal)
@@ -146,13 +146,13 @@ cd apps/api
 
 ```bash
 # Create venv
-python -m venv venv
+python -m venv .venv
 
 # Activate (macOS/Linux)
-source venv/bin/activate
+source .venv/bin/activate
 
 # Activate (Windows)
-# venv\Scripts\activate
+# .venv\Scripts\activate
 ```
 
 **Install dependencies:**
@@ -182,7 +182,10 @@ alembic upgrade head
 
 **Expected output:**
 ```
-INFO  [alembic.runtime.migration] Running upgrade  -> 001_initial_migration
+INFO  [alembic.runtime.migration] Running upgrade  -> 001_initial
+INFO  [alembic.runtime.migration] Running upgrade 001_initial -> 002_recipe_embedding_hnsw
+INFO  [alembic.runtime.migration] Running upgrade 002_recipe_embedding_hnsw -> 003_auth_and_retention
+INFO  [alembic.runtime.migration] Running upgrade 003_auth_and_retention -> 004_feedback
 ```
 
 ✅ **Pass criteria:** Migrations complete without errors
@@ -722,9 +725,9 @@ cd apps/api
 which python  # Should point to venv/bin/python
 
 # If not activated:
-source venv/bin/activate  # macOS/Linux
+source .venv/bin/activate  # macOS/Linux
 # or
-venv\Scripts\activate  # Windows
+.venv\Scripts\activate  # Windows
 
 # Reinstall dependencies
 pip install -r requirements.txt
@@ -932,20 +935,17 @@ cannot be loaded because running scripts is disabled on this system
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Then retry activation
-venv\Scripts\activate
+.venv\Scripts\activate
 ```
 
 **Solution (macOS/Linux):**
 
 ```bash
-# If venv doesn't exist, create it
-python -m venv venv
+# If .venv doesn't exist, create it
+python -m venv .venv
 
-# Make activation script executable
-chmod +x venv/bin/activate
-
-# Source it
-source venv/bin/activate
+# Source it (activate scripts ship executable by default — no chmod needed)
+source .venv/bin/activate
 ```
 
 ---

@@ -49,12 +49,12 @@ docker-compose logs grafana
 cd apps/api
 
 # Create virtual environment (if not exists)
-python -m venv venv
+python -m venv .venv
 
 # Activate virtual environment
-source venv/bin/activate  # macOS/Linux
+source .venv/bin/activate  # macOS/Linux
 # OR
-venv\Scripts\activate     # Windows
+.venv\Scripts\activate     # Windows
 
 # Install dependencies
 pip install -r requirements.txt
@@ -88,9 +88,13 @@ ALEMBIC_DATABASE_URL=postgresql+psycopg://recipe_user:recipe_password@localhost:
 alembic upgrade head
 ```
 
-**Expected output:**
+**Expected output:** four migrations applied in order
+
 ```
-INFO  [alembic.runtime.migration] Running upgrade  -> 001_initial_migration
+INFO  [alembic.runtime.migration] Running upgrade  -> 001_initial
+INFO  [alembic.runtime.migration] Running upgrade 001_initial -> 002_recipe_embedding_hnsw
+INFO  [alembic.runtime.migration] Running upgrade 002_recipe_embedding_hnsw -> 003_auth_and_retention
+INFO  [alembic.runtime.migration] Running upgrade 003_auth_and_retention -> 004_feedback
 ```
 
 **Verify tables were created:**
@@ -113,7 +117,7 @@ docker-compose exec postgres psql -U recipe_user -d recipe_ai -c '\dt'
 ## 5. Seed Database with Recipes
 
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 python scripts/seed_recipes.py
 ```
 
@@ -139,10 +143,28 @@ docker-compose exec postgres psql -U recipe_user -d recipe_ai -c 'SELECT COUNT(*
 
 **Expected:** 20 recipes
 
+### 5b. Generate embeddings (required for RAG retrieval)
+
+The RAG agent looks up recipes by vector similarity in `pgvector`. Without embeddings, every query returns nothing.
+
+```bash
+# In apps/api with .venv activated
+python scripts/embed_recipes.py
+```
+
+**Expected output:** `Embedded 20 recipes.` (subsequent runs print `Embedded 0 recipes.` because the script only touches rows where `embedding IS NULL`. Add `--force` to re-embed.)
+
+**Verify embeddings exist:**
+```bash
+docker-compose exec postgres psql -U recipe_user -d recipe_ai \
+  -c "SELECT COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS with_emb, COUNT(*) AS total FROM recipes;"
+```
+Expected: `with_emb = 20, total = 20`.
+
 ## 6. Run Backend API
 
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 ```
 
@@ -197,6 +219,19 @@ curl http://localhost:4000/
 }
 ```
 
+### 7b. Test Readiness Endpoint (DB ping)
+
+```bash
+curl -s http://localhost:4000/readiness | jq
+```
+
+**Expected (Postgres up):**
+```json
+{ "status": "ready", "checks": { "database": "ok" } }
+```
+
+**Expected (Postgres down):** HTTP 503 with `checks.database: "error: …"`. Try it by `docker stop recipe-postgres` and then re-running the curl; restart with `docker start recipe-postgres` afterwards.
+
 ## 8. Test API Documentation
 
 **Open in browser:**
@@ -226,35 +261,52 @@ curl -X POST http://localhost:4000/api/v1/recommendations \
   }'
 ```
 
-**Expected response structure:**
+**Expected response structure** (six top-level fields; `metadata` is internal-only and not serialized):
+
 ```json
 {
   "recommendations": [
     {
       "id": 1,
       "name": "Chicken Plov",
-      "description": "...",
       "cuisine": "Central Asian",
-      "prep_time": 20,
-      "cook_time": 60,
-      "total_time": 80,
-      "servings": 6,
-      "difficulty": "medium",
-      "ingredients": [...],
-      "instructions": [...]
+      "ingredients": ["chicken thighs", "rice", "carrots", "onion", "cumin"],
+      "instructions": ["…"]
     }
   ],
   "menu_plan": {
-    "days": [...],
-    "total_days": 7
+    "days": [
+      { "day": 1, "meals": { "dinner": { "name": "Chicken Plov" } } }
+    ],
+    "total_days": 7,
+    "servings": 2
   },
   "grocery_list": {
-    "items": [...],
+    "items": [
+      {
+        "ingredient": "chicken thighs",
+        "quantity": 800,
+        "unit": "g",
+        "category": "meat",
+        "already_available": false
+      }
+    ],
+    "categories": { "meat": [/*…*/], "grains": [/*…*/] },
     "total_items": 15
   },
-  "trace_id": "..."
+  "nutrition_notes": "All nutritional values are rough estimates and not medical advice. …",
+  "warnings": [
+    "Quantities are estimates because recipe ingredient amounts are incomplete."
+  ],
+  "trace_id": "abc123…"
 }
 ```
+
+Notes:
+- `menu_plan` is `null` when the request did not ask for a multi-day plan (no `days`, no "week"/"weekly" intent).
+- `grocery_list` is `null` whenever `menu_plan` is `null`.
+- `nutrition_notes` is always a string; empty when no recipes were returned.
+- Safety / fallback warnings from the nutrition and menu validators merge into the top-level `warnings`.
 
 **Test with ingredients:**
 ```bash
@@ -291,7 +343,7 @@ curl -X POST http://localhost:4000/api/v1/recommendations \
 
 **Use test script:**
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 python scripts/test_recommendations.py
 ```
 
@@ -385,12 +437,22 @@ curl http://localhost:3200/ready
 
 ### Test Loki (Structured Logging)
 
+> ⚠️ **Logs only flow to Loki when running the API via `docker-compose --profile apps up`.** The default infra-only stack starts Loki but no log shipper. Promtail (added under the `apps` profile) is what tails container stdout and pushes JSON log lines to Loki. If you're running the API locally via `./run.sh` or `uvicorn`, logs go only to stdout — you can `grep` them there, but Grafana's Loki datasource will be empty.
+
 **View logs in Grafana:**
 1. Open Grafana: http://localhost:3001
 2. Click "Explore"
 3. Select "Loki" data source
 4. Query: `{service="recipe-api"}`
 5. Should see JSON-formatted logs
+
+Useful LogQL queries (with the structured event labels):
+```logql
+{service="recipe-api", event="node_complete"}              # per-node latency events
+{service="recipe-api", event="llm_fallback"}               # agents that fell back
+{service="recipe-api", event="api_error"}                  # request failures
+{service="recipe-api"} | json | request_id=`<your-id>`     # all logs for one request
+```
 
 **Verify Loki health:**
 ```bash
@@ -411,7 +473,7 @@ curl -G -s "http://localhost:3100/loki/api/v1/query_range" \
 ### Test Recipe Search
 
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 python scripts/test_search.py
 ```
 
@@ -424,16 +486,97 @@ python scripts/test_search.py
 ### Verify Database Connection
 
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 python scripts/verify_db.py
 ```
 
 ### Check LLM Configuration
 
 ```bash
-# In apps/api with venv activated
+# In apps/api with .venv activated
 python scripts/check_llm_config.py
 ```
+
+## 13. Test New API Endpoints
+
+### Feedback (rate a prior recommendation)
+
+```bash
+# Use the trace_id from a /api/v1/recommendations response
+curl -s -X POST http://localhost:4000/api/v1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"trace_id":"<paste-trace-id-here>","rating":5,"comment":"great plov"}' | jq
+```
+
+Expected: HTTP 201, JSON containing the stored feedback record (id, trace_id, rating, comment, created_at).
+
+### Auth — issue an API key
+
+```bash
+curl -s -X POST http://localhost:4000/api/v1/auth/api-keys \
+  -H "Content-Type: application/json" \
+  -d '{"owner_id":"alice","name":"local-test","tracing_consent":true}' | jq
+```
+
+Expected: HTTP 201 with the plaintext `api_key` (returned **once** — copy it). Consumers send `X-API-Key: <key>` on subsequent requests. Enforcement is gated by `REQUIRE_AUTH=true` in `.env`; by default the API is open.
+
+## 14. Test Production Safety
+
+### Rate limit (10 req/min/IP on `/recommendations`)
+
+```bash
+seq 1 15 | xargs -P 15 -I{} curl -s -o /dev/null -w "%{http_code}\n" \
+  -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" -d '{"message":"x"}'
+```
+
+Expected: at least five `429 Too Many Requests` responses among the 15 attempts.
+
+Override the limit via `.env`:
+
+```env
+RATE_LIMIT_PER_MINUTE=10
+```
+
+### Request size limit (default 1 MB)
+
+```bash
+python3 -c 'import json;print(json.dumps({"message":"x"*(2*1024*1024)}))' | \
+  curl -i -X POST http://localhost:4000/api/v1/recommendations \
+    -H "Content-Type: application/json" --data-binary @-
+```
+
+Expected: HTTP 413 with body `"Request body too large: <N> bytes (max 1048576)."`. Tune via `MAX_REQUEST_BYTES`.
+
+### LLM timeout
+
+Default: `LLM_TIMEOUT_SECONDS=30.0`. Lower it to verify the timeout actually kicks in:
+
+```bash
+LLM_TIMEOUT_SECONDS=0.001 ./run.sh  # in a fresh terminal
+# Then POST any /recommendations request — expect HTTP 500 with a timeout
+# in the logs, not a 60-second hang.
+```
+
+Restore the value afterwards.
+
+## 15. Run the Python Test Suite
+
+```bash
+# In apps/api with .venv activated
+
+# Fast unit tests (no DB, no LLM, no API keys required)
+pytest -m "not integration" -v
+
+# Full suite (integration tests auto-skip when OPENAI_API_KEY is unset)
+pytest -v
+
+# Static checks
+ruff check app
+mypy app
+```
+
+Expected: **164 unit tests pass**, mypy `Success: no issues found`, ruff `All checks passed!`. Integration tests are marked with `@pytest.mark.integration` and require a populated DB + `OPENAI_API_KEY`.
 
 ## Common Issues and Fixes
 
@@ -553,7 +696,7 @@ which python  # Should show venv path
 
 # If not activated
 cd apps/api
-source venv/bin/activate
+source .venv/bin/activate
 
 # Reinstall dependencies
 pip install -r requirements.txt

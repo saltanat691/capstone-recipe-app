@@ -460,7 +460,7 @@ Make sure you're in the correct directory and virtual environment:
 
 ```bash
 cd apps/api
-source venv/bin/activate
+source .venv/bin/activate
 python -c "from app.models import Recipe; print('OK')"
 ```
 

@@ -49,7 +49,7 @@ apps/api/
 2. **Create a virtual environment:**
    ```bash
    # Using venv (built-in)
-   python -m venv venv
+   python -m venv .venv
 
    # Or using virtualenv
    virtualenv venv
@@ -62,12 +62,12 @@ apps/api/
 
    On macOS/Linux:
    ```bash
-   source venv/bin/activate
+   source .venv/bin/activate
    ```
 
    On Windows:
    ```cmd
-   venv\Scripts\activate
+   .venv\Scripts\activate
    ```
 
    With conda:
@@ -466,7 +466,7 @@ uvicorn app.main:app --port 4001 --reload
 Make sure you're in the correct directory and virtual environment is activated:
 ```bash
 cd apps/api
-source venv/bin/activate  # or the appropriate activation command
+source .venv/bin/activate  # or the appropriate activation command
 pip install -r requirements.txt
 ```
 

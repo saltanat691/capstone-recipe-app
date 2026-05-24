@@ -34,8 +34,8 @@ Ensure you have the following installed:
 
    # Backend
    cd ../api
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
@@ -108,8 +108,8 @@ The development server will start at `http://localhost:3000`.
 
 ```bash
 cd apps/api
-source venv/bin/activate
-uvicorn src.main:app --reload --port 4000
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 4000
 ```
 
 The API will be available at `http://localhost:4000`.

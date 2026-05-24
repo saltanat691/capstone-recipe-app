@@ -64,7 +64,7 @@ You should see:
 
 ```bash
 cd apps/api
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 ```
 

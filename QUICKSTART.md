@@ -1,260 +1,136 @@
-# Quick Start Guide
+# Quick Start
 
-Get the Recipe AI System up and running in minutes.
+Minimal happy path to get the full stack running locally. For deeper troubleshooting, see [`TESTING_GUIDE.md`](TESTING_GUIDE.md) or [`docs/SETUP_CHECKLIST.md`](docs/SETUP_CHECKLIST.md).
 
 ## Prerequisites
 
-- Node.js 18+
-- Python 3.11+
-- Docker and Docker Compose
-- Git
+- **Docker** and **Docker Compose**
+- **Python 3.11+**
+- **Node.js 20+** and **npm**
+- An **OpenAI API key** (the LLM-backed agents won't run without it; non-LLM tests still pass)
 
-## 1. Clone and Setup
+## 1. Configure env
 
 ```bash
-# If not already cloned
-git clone <repository-url>
-cd recipe-ai-system
-
-# Copy environment variables
+# From the repo root — single monorepo template, copied to .env
 cp .env.example .env
+# Edit .env: paste your real OPENAI_API_KEY. Optionally set USDA_API_KEY,
+# LANGSMITH_API_KEY, etc. Defaults are fine for local dev.
 ```
 
-## 2. Start Infrastructure
+The API reads `<repo-root>/.env` first, falling back to a legacy `apps/api/.env` if you have one. New developers only need root `.env`.
 
-Start PostgreSQL, Grafana, Tempo, and Loki:
+## 2. Start infrastructure (Postgres + Grafana + Tempo + Loki)
 
 ```bash
 cd infra/docker
 docker-compose up -d
-
-# Verify services are running
-docker-compose ps
+docker-compose ps     # all four containers should be Up
 ```
 
-You should see all 4 services as "Up":
-- recipe-postgres
-- recipe-grafana
-- recipe-tempo
-- recipe-loki
-
-## 3. Start Backend API
+## 3. Backend — install, migrate, seed, embed
 
 ```bash
-# Navigate to API directory
 cd ../../apps/api
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+python -m venv .venv
+source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# The API reads from <repo-root>/.env — set that up from the repo root if
-# you haven't already (`cp .env.example .env` at the repo root). No
-# additional file is needed inside apps/api.
+alembic upgrade head                # applies migrations 001–004
+python scripts/seed_recipes.py      # 20 seed recipes
+python scripts/embed_recipes.py     # one-time: populates pgvector embeddings
+```
 
-# Run the API
+## 4. Run the API
+
+```bash
+# Still in apps/api with .venv active
 uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 ```
 
-**Backend will be available at:**
-- API: http://localhost:4000
-- Swagger Docs: http://localhost:4000/docs
+Access:
+- API: <http://localhost:4000>
+- Swagger UI: <http://localhost:4000/docs>
+- Liveness: <http://localhost:4000/health>
+- Readiness (DB ping): <http://localhost:4000/readiness>
 
-## 4. Start Frontend
+## 5. Run the frontend
 
-Open a new terminal:
+In a new terminal:
 
 ```bash
-# Navigate to web directory
 cd apps/web
-
-# Install dependencies
+cp .env.local.example .env.local    # exposes NEXT_PUBLIC_API_URL
 npm install
-
-# Run the frontend
 npm run dev
 ```
 
-**Frontend will be available at:** http://localhost:3000
+Open <http://localhost:3000> — the form is wired to `POST /api/v1/recommendations` and renders all six response fields with loading and error states.
 
-## 5. Access Services
+## 6. Smoke-test the API
 
-Now you can access:
+```bash
+# Single-recipe suggestion
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"message":"chicken and rice dinner"}' | jq '.recommendations[].name'
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **Frontend** | http://localhost:3000 | - |
-| **Backend API** | http://localhost:4000 | - |
-| **API Docs** | http://localhost:4000/docs | - |
-| **Grafana** | http://localhost:3001 | admin / admin |
-| **Tempo** | http://localhost:3200 | - |
-| **PostgreSQL** | localhost:5432 | recipe_user / recipe_password |
+# 3-day menu plan + grocery list
+curl -s -X POST http://localhost:4000/api/v1/recommendations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message":"3-day dinner menu with chicken and rice",
+    "available_ingredients":["chicken","rice"],
+    "days":3
+  }' | jq '{
+      recipes:[.recommendations[].name],
+      days:(.menu_plan.days|length),
+      grocery:.grocery_list.total_items,
+      warnings
+    }'
+```
 
-## 6. Test the Application
+Also available:
+- `POST /api/v1/auth/api-keys` — issue an API key (consumers send `X-API-Key`, enforcement gated by `REQUIRE_AUTH=true`)
+- `POST /api/v1/feedback` — rate a previous response 1–5 stars via its `trace_id`
 
-1. Open http://localhost:3000 in your browser
-2. You should see the "Recipe AI System" interface
-3. Fill out the form:
-   - Add some ingredients
-   - Select dietary restrictions
-   - Choose cuisine preferences
-   - Set number of days
-4. Click "Generate Recipe Recommendations"
-5. Check browser console for logged data (API integration coming soon)
+## Alternative — full stack in Docker
 
-## 7. Verify Backend
+If you prefer everything containerized (API + web + Promtail log shipper joining the infra services):
 
-1. Open http://localhost:4000/docs
-2. Try the `/health` endpoint
-3. Try the `/api/v1/status` endpoint
-
-## 8. Check Observability
-
-1. Open Grafana: http://localhost:3001
-2. Login with `admin` / `admin`
-3. Go to **Explore**
-4. Select **Loki** data source
-5. You can query logs (once applications start sending them)
-
-## Stopping Services
-
-### Stop Frontend
-In the frontend terminal: `Ctrl+C`
-
-### Stop Backend
-In the backend terminal: `Ctrl+C`
-
-### Stop Infrastructure
 ```bash
 cd infra/docker
-docker-compose down
-
-# To remove all data as well:
-docker-compose down -v
+docker-compose --profile apps up -d --build
 ```
 
-## Troubleshooting
+Then open the same URLs. Promtail will start scraping container stdout and shipping to Loki.
 
-### Port Already in Use
+## Observability
 
-If you get "port already in use" errors:
+- Grafana: <http://localhost:3001> (admin/admin)
+  - Tempo datasource — traces (`service=recipe-api`)
+  - Loki datasource — logs (only populated when running via `--profile apps`; see [README → Observability Stack](README.md#observability-stack))
+
+## Run the test suite
 
 ```bash
-# Check what's using the port
-lsof -i :3000  # Frontend
-lsof -i :4000  # Backend
-lsof -i :5432  # PostgreSQL
-lsof -i :3001  # Grafana
-
-# Kill the process
-lsof -ti :PORT | xargs kill -9
+cd apps/api && source .venv/bin/activate
+pytest -m "not integration" -v      # fast unit tests, no API keys required
+pytest -v                           # full suite; integration tests skip cleanly without OPENAI_API_KEY
 ```
 
-### Docker Services Won't Start
+## Stop everything
 
 ```bash
-# Check Docker is running
-docker ps
-
-# View logs
-cd infra/docker
-docker-compose logs
-
-# Restart services
-docker-compose restart
-```
-
-### Backend Module Not Found
-
-Make sure you're in the correct directory and virtual environment is activated:
-
-```bash
-cd apps/api
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Frontend Module Not Found
-
-```bash
-cd apps/web
-rm -rf node_modules package-lock.json
-npm install
-```
-
-## Next Steps
-
-- Explore the API documentation at http://localhost:4000/docs
-- Read `docs/ARCHITECTURE.md` for system design
-- Read `docs/DEVELOPMENT.md` for development guidelines
-- Read `docs/OBSERVABILITY.md` for monitoring setup
-- Check individual README files in:
-  - `apps/web/README.md` - Frontend details
-  - `apps/api/README.md` - Backend details
-  - `infra/README.md` - Infrastructure details
-
-## Development Workflow
-
-### Making Changes
-
-1. **Frontend changes**: Files in `apps/web/app/` - hot reload enabled
-2. **Backend changes**: Files in `apps/api/app/` - hot reload enabled
-3. **Infrastructure changes**: Restart Docker Compose services
-
-### Viewing Logs
-
-```bash
-# Backend logs: Check terminal where API is running
-# Frontend logs: Check terminal where Next.js is running
-# Infrastructure logs:
-cd infra/docker
-docker-compose logs -f [service-name]
-```
-
-### Database Access
-
-```bash
-# Connect to PostgreSQL
-docker exec -it recipe-postgres psql -U recipe_user -d recipe_ai
-
-# Enable pgvector extension
-CREATE EXTENSION IF NOT EXISTS vector;
-
-# List tables (once created)
-\dt
-
-# Exit
-\q
-```
-
-## Quick Commands Reference
-
-```bash
-# Start everything
-cd infra/docker && docker-compose up -d
-cd apps/api && source venv/bin/activate && uvicorn app.main:app --port 4000 --reload &
-cd apps/web && npm run dev
-
-# Stop everything
-# Ctrl+C in terminals
+# Frontend / API: Ctrl-C in their terminals
+# Infra:
 cd infra/docker && docker-compose down
-
-# View all running services
-docker-compose ps
-lsof -i :3000 -i :4000 -i :3001 -i :5432
-
-# Reset database
-cd infra/docker
-docker-compose down -v
-docker-compose up -d postgres
+# Full stack (apps profile):
+docker-compose --profile apps down
 ```
 
-## Need Help?
+## Need help?
 
-- Check detailed README files in each directory
-- Review documentation in `docs/` folder
-- Check GitHub issues
-- Review error logs in terminals and Docker
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** — endpoint-by-endpoint walkthroughs, observability checks, common errors
+- **[docs/SETUP_CHECKLIST.md](docs/SETUP_CHECKLIST.md)** — exhaustive setup verification with expected outputs
+- **[README.md](README.md)** — architecture, features, agent details
