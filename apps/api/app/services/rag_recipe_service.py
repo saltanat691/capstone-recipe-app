@@ -149,6 +149,8 @@ async def retrieve_recipes(
                 cuisine=recipe.cuisine,
                 ingredients=ingredient_names,
                 instructions=_normalize_instructions(recipe.instructions),
+                source=recipe.source,
+                source_url=recipe.source_url,
                 score=round(score, 4),
                 match_reason=", ".join(reasons),
             )
@@ -187,6 +189,8 @@ async def retrieve_recipes(
                     cuisine=recipe.cuisine,
                     ingredients=ingredient_names,
                     instructions=_normalize_instructions(recipe.instructions),
+                    source=recipe.source,
+                    source_url=recipe.source_url,
                     score=round(similarity, 4),
                     match_reason=f"fallback_similarity={similarity:.3f}",
                 )

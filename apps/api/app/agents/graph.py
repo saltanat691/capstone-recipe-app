@@ -301,6 +301,8 @@ class RecipeAgentGraph:
                 cuisine=r.cuisine,
                 ingredients=r.ingredients,
                 instructions=r.instructions,
+                source=r.source,
+                source_url=r.source_url,
             )
             for r in retrieved
         ]
@@ -463,12 +465,10 @@ def _to_response_menu_plan(
                 id=recipe_id,
                 name=meal.recipe_name,
                 cuisine=retrieved_recipe.cuisine if retrieved_recipe else None,
-                ingredients=retrieved_recipe.ingredients
-                if retrieved_recipe
-                else None,
-                instructions=retrieved_recipe.instructions
-                if retrieved_recipe
-                else None,
+                ingredients=retrieved_recipe.ingredients if retrieved_recipe else None,
+                instructions=retrieved_recipe.instructions if retrieved_recipe else None,
+                source=retrieved_recipe.source if retrieved_recipe else None,
+                source_url=retrieved_recipe.source_url if retrieved_recipe else None,
             )
         response_days.append(
             ResponseMenuDay(

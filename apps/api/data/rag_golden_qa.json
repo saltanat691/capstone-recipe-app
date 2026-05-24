@@ -1,0 +1,163 @@
+{
+  "version": "1.0",
+  "description": "Golden QA set for RAG retrieval quality evaluation. Each entry pairs a natural-language query with the recipe names that should appear in the top-K results. Queries are designed to test cuisine matching, ingredient overlap, dietary filtering, meal-type awareness, and semantic (non-keyword) understanding.",
+  "k": 5,
+  "thresholds": {
+    "precision_at_k": 0.40,
+    "recall_at_k": 0.55,
+    "mrr": 0.55
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "description": "Cuisine + ingredient signal — Central Asian plov",
+      "query": "Central Asian rice pilaf with meat for dinner",
+      "expected_recipes": ["Chicken Plov", "Beef Plov"],
+      "filters": {}
+    },
+    {
+      "id": "q02",
+      "description": "Meal-type + category — lunch soups",
+      "query": "warm soup for a weekday lunch",
+      "expected_recipes": ["Lentil Soup", "Chicken Noodle Soup"],
+      "filters": {}
+    },
+    {
+      "id": "q03",
+      "description": "Meal-type — breakfast eggs",
+      "query": "quick protein-rich breakfast with eggs",
+      "expected_recipes": ["Egg Breakfast Plate", "Shakshuka"],
+      "filters": {}
+    },
+    {
+      "id": "q04",
+      "description": "Ingredient signal — noodle dishes",
+      "query": "dinner with noodles or pasta",
+      "expected_recipes": ["Lagman-style Noodles", "Spaghetti Bolognese"],
+      "filters": {}
+    },
+    {
+      "id": "q05",
+      "description": "Cuisine — Central Asian traditional dishes",
+      "query": "traditional Central Asian meat dish",
+      "expected_recipes": ["Beshbarmak-style Chicken", "Chicken Plov", "Beef Plov"],
+      "filters": {}
+    },
+    {
+      "id": "q06",
+      "description": "Cuisine + dietary — Mediterranean vegetarian",
+      "query": "Mediterranean vegetarian dinner",
+      "expected_recipes": ["Vegetable Stew", "Lentil Soup", "Greek Salad"],
+      "filters": {}
+    },
+    {
+      "id": "q07",
+      "description": "Semantic — Asian stir fry",
+      "query": "quick Asian-style stir fry for dinner",
+      "expected_recipes": ["Chicken Stir Fry", "Salmon Teriyaki"],
+      "filters": {}
+    },
+    {
+      "id": "q08",
+      "description": "Specific recipe — Greek salad",
+      "query": "fresh Greek salad with olives and feta",
+      "expected_recipes": ["Greek Salad"],
+      "filters": {}
+    },
+    {
+      "id": "q09",
+      "description": "Cuisine — Italian dinner",
+      "query": "classic Italian dinner",
+      "expected_recipes": ["Spaghetti Bolognese", "Mushroom Risotto"],
+      "filters": {}
+    },
+    {
+      "id": "q10",
+      "description": "Cuisine — spicy curry",
+      "query": "spicy curry dinner",
+      "expected_recipes": ["Vegetable Curry", "Thai Green Curry"],
+      "filters": {}
+    },
+    {
+      "id": "q11",
+      "description": "Specific recipe — tacos",
+      "query": "Mexican chicken tacos for lunch",
+      "expected_recipes": ["Chicken Tacos"],
+      "filters": {}
+    },
+    {
+      "id": "q12",
+      "description": "Health-focused — grain bowl",
+      "query": "healthy grain bowl with vegetables",
+      "expected_recipes": ["Quinoa Buddha Bowl", "Greek Salad"],
+      "filters": {}
+    },
+    {
+      "id": "q13",
+      "description": "Specific recipe — teriyaki",
+      "query": "Japanese teriyaki with salmon",
+      "expected_recipes": ["Salmon Teriyaki"],
+      "filters": {}
+    },
+    {
+      "id": "q14",
+      "description": "Specific recipe — mushroom risotto",
+      "query": "creamy mushroom risotto Italian",
+      "expected_recipes": ["Mushroom Risotto"],
+      "filters": {}
+    },
+    {
+      "id": "q15",
+      "description": "Specific recipe + cuisine — shakshuka",
+      "query": "Middle Eastern eggs poached in tomato sauce",
+      "expected_recipes": ["Shakshuka"],
+      "filters": {}
+    },
+    {
+      "id": "q16",
+      "description": "Ingredient — seafood dinner",
+      "query": "dinner with fish or seafood",
+      "expected_recipes": ["Salmon Teriyaki", "Fish with Vegetables"],
+      "filters": {}
+    },
+    {
+      "id": "q17",
+      "description": "Ingredient-based — chicken with vegetables",
+      "query": "I have chicken and mixed vegetables, what can I make?",
+      "expected_recipes": [
+        "Chicken Stir Fry",
+        "Chicken Plov",
+        "Beshbarmak-style Chicken",
+        "Buckwheat with Chicken"
+      ],
+      "filters": {}
+    },
+    {
+      "id": "q18",
+      "description": "Cuisine + ingredient — buckwheat Eastern European",
+      "query": "Eastern European buckwheat dinner",
+      "expected_recipes": ["Buckwheat with Chicken"],
+      "filters": {}
+    },
+    {
+      "id": "q19",
+      "description": "Dietary — vegan or vegetarian dinner",
+      "query": "vegan or vegetarian dinner options",
+      "expected_recipes": ["Vegetable Stew", "Vegetable Curry", "Quinoa Buddha Bowl", "Greek Salad"],
+      "filters": {}
+    },
+    {
+      "id": "q20",
+      "description": "Ingredient — rice-based dinners",
+      "query": "something with rice for dinner, feeds 4",
+      "expected_recipes": [
+        "Chicken Plov",
+        "Beef Plov",
+        "Chicken Stir Fry",
+        "Vegetable Curry",
+        "Thai Green Curry"
+      ],
+      "filters": {}
+    }
+  ]
+}

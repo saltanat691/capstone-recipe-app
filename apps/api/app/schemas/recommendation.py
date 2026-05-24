@@ -101,6 +101,8 @@ class RecipeRecommendation(BaseModel):
     instructions: Optional[list[str]] = Field(None, description="Cooking instructions")
     nutrition: Optional[dict[str, Any]] = Field(None, description="Nutritional information")
     tags: Optional[list[str]] = Field(None, description="Recipe tags")
+    source: Optional[str] = Field(None, description="Recipe source name")
+    source_url: Optional[str] = Field(None, description="URL of the original recipe")
 
 
 class MenuDay(BaseModel):

@@ -6,8 +6,10 @@ All instruments are module-level singletons; call setup_metrics() once
 at startup before using record_* helpers.
 """
 
+import psutil
 from opentelemetry import metrics
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -16,6 +18,18 @@ from app.core.config import settings
 from app.observability import get_logger
 
 logger = get_logger(__name__)
+
+_process = psutil.Process()  # cache once; safe to reuse across threads
+
+
+def _observe_memory_rss(options: CallbackOptions):
+    yield Observation(_process.memory_info().rss / 1024 / 1024)
+
+
+def _observe_cpu_percent(options: CallbackOptions):
+    # interval=None returns a non-blocking reading relative to the last call
+    yield Observation(_process.cpu_percent(interval=None))
+
 
 _meter = None  # set by setup_metrics()
 
@@ -81,6 +95,19 @@ def setup_metrics() -> None:
     _diversity_warn_counter = _meter.create_counter(
         "cuisine_diversity_warnings_total",
         description="Requests where cuisine skew warning was added",
+    )
+
+    _meter.create_observable_gauge(
+        "process_memory_rss_mb",
+        callbacks=[_observe_memory_rss],
+        description="Process RSS memory usage",
+        unit="MB",
+    )
+    _meter.create_observable_gauge(
+        "process_cpu_percent",
+        callbacks=[_observe_cpu_percent],
+        description="Process CPU usage",
+        unit="%",
     )
 
     logger.info(
