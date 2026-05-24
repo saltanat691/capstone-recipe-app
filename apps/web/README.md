@@ -113,7 +113,7 @@ Multi-select options:
 - American
 - Indian
 - French
-- Thai
+- Central Asian
 
 #### Number of Days
 Slider input (1-7 days) for meal plan duration.

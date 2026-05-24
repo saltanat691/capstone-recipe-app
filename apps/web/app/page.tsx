@@ -273,7 +273,7 @@ function RecipeApp({ apiKey }: { apiKey: string | null }) {
     "American",
     "Indian",
     "French",
-    "Thai",
+    "Central Asian",
   ];
 
   return (
