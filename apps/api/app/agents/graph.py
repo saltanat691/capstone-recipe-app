@@ -1,11 +1,14 @@
 """
 LangGraph workflow.
 
-Pipeline with parallel fan-out after retrieval:
+Pipeline with internal parallelism after retrieval:
     START -> ingredient_agent_node -> recipe_retrieval_node
-          -> nutrition_agent_node   ─┐
-          -> menu_planner_agent_node ┘ (parallel)
+          -> parallel_agents_node   (nutrition + menu_planner via asyncio.gather)
           -> grocery_list_agent_node -> final_response_node -> END
+
+nutrition_agent and menu_planner_agent run concurrently inside
+parallel_agents_node using asyncio.gather() — same running event loop,
+no anyio TaskGroup, no cross-loop Future conflicts.
 """
 
 import time
@@ -81,7 +84,7 @@ class RecipeAgentGraph:
     """
 
     def __init__(self) -> None:
-        logger.info("Initializing RecipeAgentGraph (parallel fan-out after retrieval)")
+        logger.info("Initializing RecipeAgentGraph (asyncio.gather parallelism)")
         self.ingredient_agent = IngredientAgent()
         self.nutrition_agent = NutritionAgent()
         self.menu_planner_agent = MenuPlannerAgent()
@@ -160,8 +163,8 @@ class RecipeAgentGraph:
             )
             return {"retrieved_recipes": recipes, "warnings": warnings}
 
-    async def _nutrition_agent_node(self, state: State) -> dict[str, Any]:
-        """Enrich the retrieved recipes with nutrition notes."""
+    async def _nutrition_agent_body(self, state: State) -> dict[str, Any]:
+        """Core logic for the nutrition agent (called directly or via gather)."""
         async with _timed_node("nutrition_agent_node", state.get("request_id")):
             retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
             if not retrieved:
@@ -189,16 +192,15 @@ class RecipeAgentGraph:
             )
             return {"nutrition_notes": output.notes}
 
-    async def _menu_planner_agent_node(self, state: State) -> dict[str, Any]:
-        """Build an n-day menu plan from the retrieved recipes."""
+    async def _menu_planner_agent_body(self, state: State) -> dict[str, Any]:
+        """Core logic for the menu planner agent (called directly or via gather)."""
         async with _timed_node("menu_planner_agent_node", state.get("request_id")):
             retrieved: list[RetrievedRecipe] = state.get("retrieved_recipes") or []
             intake = state.get("ingredient_agent_output")
-            notes: list[NutritionNote] = state.get("nutrition_notes") or []
 
             agent_input = MenuPlannerAgentInput(
                 recipes=retrieved,
-                nutrition_notes=notes,
+                nutrition_notes=[],  # runs in parallel with nutrition; notes unavailable
                 available_ingredients=list(
                     getattr(intake, "available_ingredients", []) or []
                 ),
@@ -227,6 +229,22 @@ class RecipeAgentGraph:
                 },
             )
             return {"menu_plan": output.menu_plan}
+
+    async def _parallel_agents_node(self, state: State) -> dict[str, Any]:
+        """
+        Run nutrition and menu_planner concurrently using asyncio.gather().
+
+        asyncio.gather() always runs within the current event loop — unlike
+        LangGraph's native fan-out which uses anyio.TaskGroup and can create
+        futures in a different loop context on Python 3.10.
+        """
+        import asyncio
+
+        nutrition_result, menu_result = await asyncio.gather(
+            self._nutrition_agent_body(state),
+            self._menu_planner_agent_body(state),
+        )
+        return {**nutrition_result, **menu_result}
 
     async def _grocery_list_agent_node(self, state: State) -> dict[str, Any]:
         """Generate a grocery list from the menu plan and retrieved recipes."""
@@ -370,38 +388,30 @@ class RecipeAgentGraph:
         """
         Compile the LangGraph workflow.
 
-        After retrieval, nutrition_agent_node and menu_planner_agent_node run
-        in parallel (both depend only on retrieved_recipes, not on each other).
-        LangGraph's fan-in automatically waits for both before grocery_list_agent_node
-        starts.  Note: menu_planner receives nutrition_notes=[] during parallel
-        execution; nutrition context is soft — the planner still produces a valid
-        plan without it.
+        The graph is linear; parallelism is handled inside parallel_agents_node
+        via asyncio.gather() rather than LangGraph fan-out edges.  This avoids
+        anyio.TaskGroup creating futures in a different event loop context on
+        Python 3.10, which caused 'Future attached to a different loop' errors
+        when running under pytest + httpx ASGITransport.
         """
         from langgraph.graph import END, START, StateGraph
 
         builder = StateGraph(State)
         builder.add_node("ingredient_agent_node", self._ingredient_agent_node)
         builder.add_node("recipe_retrieval_node", self._recipe_retrieval_node)
-        builder.add_node("nutrition_agent_node", self._nutrition_agent_node)
-        builder.add_node("menu_planner_agent_node", self._menu_planner_agent_node)
+        builder.add_node("parallel_agents_node", self._parallel_agents_node)
         builder.add_node("grocery_list_agent_node", self._grocery_list_agent_node)
         builder.add_node("final_response_node", self._final_response_node)
 
         builder.add_edge(START, "ingredient_agent_node")
         builder.add_edge("ingredient_agent_node", "recipe_retrieval_node")
-        # Fan-out: both nodes start as soon as retrieval completes
-        builder.add_edge("recipe_retrieval_node", "nutrition_agent_node")
-        builder.add_edge("recipe_retrieval_node", "menu_planner_agent_node")
-
-        # Fan-in: grocery_list waits for both to finish before starting
-        builder.add_edge("nutrition_agent_node", "grocery_list_agent_node")
-        builder.add_edge("menu_planner_agent_node", "grocery_list_agent_node")
-
+        builder.add_edge("recipe_retrieval_node", "parallel_agents_node")
+        builder.add_edge("parallel_agents_node", "grocery_list_agent_node")
         builder.add_edge("grocery_list_agent_node", "final_response_node")
         builder.add_edge("final_response_node", END)
 
         self.graph = builder.compile()
-        logger.info("RecipeAgentGraph compiled (parallel fan-out after retrieval)")
+        logger.info("RecipeAgentGraph compiled (asyncio.gather parallelism)")
 
     async def invoke(
         self,

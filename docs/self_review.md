@@ -8,19 +8,22 @@
 
 ## 1. Architecture Overview
 
-The system follows a **multi-agent pipeline with a parallel fan-out** orchestrated by LangGraph:
+The system follows a **linear LangGraph pipeline with internal parallelism** after retrieval:
 
 ```
 User Request
     → Ingredient Agent               (parse intent, extract preferences)
     → RAG Retrieval Node             (embed query → pgvector search → re-rank)
-    → Nutrition Agent   ─┐           (estimate macros, flag health warnings)   ┐ parallel
-    → Menu Planner Agent ┘ (join)    (build day-by-day meal plan)              ┘
+    → Parallel Agents Node           (Nutrition + Menu Planner via asyncio.gather)
+         ├─ Nutrition Agent          (estimate macros, flag health warnings)   ┐ concurrent
+         └─ Menu Planner Agent       (build day-by-day meal plan)              ┘
     → Grocery List Agent             (aggregate ingredients into shopping list)
     → Response Assembly              (merge all outputs into single response)
 ```
 
-After retrieval, the Nutrition Agent and Menu Planner Agent run **in parallel** — both depend only on the retrieved recipes, not on each other. LangGraph's fan-in automatically waits for both before the Grocery List Agent starts. This reduces end-to-end latency from `nutrition_time + menu_time` to `max(nutrition_time, menu_time)`.
+After retrieval, the Nutrition Agent and Menu Planner Agent run **concurrently** inside a single `parallel_agents_node` using `asyncio.gather()`. Both depend only on the retrieved recipes, not on each other. This reduces end-to-end latency from `nutrition_time + menu_time` to `max(nutrition_time, menu_time)`.
+
+The parallelism is implemented with `asyncio.gather()` rather than LangGraph's native fan-out edges (which use `anyio.TaskGroup` internally). On Python 3.10, anyio can create futures in a different event loop context than the one used by Starlette's middleware layer, causing runtime errors in the test environment. `asyncio.gather()` always runs within the current event loop, avoiding the issue entirely.
 
 ---
 
@@ -30,7 +33,7 @@ After retrieval, the Nutrition Agent and Menu Planner Agent run **in parallel** 
 
 **Choice:** Use LangGraph for agent workflow management.  
 **Rationale:** LangGraph provides built-in state management, retry logic, and observability hooks. Building a custom orchestrator would have duplicated these concerns and added maintenance burden.  
-**Trade-off:** LangGraph adds a dependency and introduces its own abstractions. The trade-off paid off: the parallel fan-out between the Nutrition Agent and Menu Planner Agent was implemented with a four-line graph wiring change, with no changes to the node logic. A plain `asyncio` sequence would have required manual task management and synchronization for the same result.
+**Trade-off:** LangGraph adds a dependency and introduces its own abstractions. The trade-off paid off: concurrent execution of the Nutrition and Menu Planner agents was added without changes to either agent's logic — only the graph wiring and a new `parallel_agents_node` wrapper needed touching. One nuance: LangGraph's native fan-out uses `anyio.TaskGroup` internally, which conflicts with Starlette's middleware event loop on Python 3.10. The solution was to keep the LangGraph graph linear and implement parallelism inside a single node via `asyncio.gather()` — a pattern that is portable across Python versions and test environments.
 
 ### Decision 2: pgvector over a dedicated vector database
 
